@@ -26,4 +26,5 @@ pyinstaller ChatApp.spec
 
 <br><br>
 
-## Ready-made application
+## [Ready-made application](https://github.com/GeorgiiPoliakov1/MathLogicChat/releases/tag/v.1.0.0)
+
