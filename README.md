@@ -2,12 +2,18 @@
 
 <br>
 
-## Run manually
+## Run manually (Linux)
 ### Install dependencies:
 ```python
 python3 -m venv env
 source env/bin/activate
 pip install -r requerements.txt
+```
+<br>
+
+> For Windows instead `source env/bin/activate`: 
+```python
+env\Scripts\activate
 ```
 
 ### Run code:
@@ -24,6 +30,7 @@ pip install -r requirements-dev.txt
 pytest tests/ -v --tb=no 
 ```
 <br>
+
 > for more test details:
 
 ```python
@@ -32,11 +39,19 @@ pytest tests/ -v
 
 <br>
 
-## Build manually (get .exe, .bin)
+## Build manually (get .bin, .exe) (Linux)
 ```python
 source env/bin/activate
 pip install pyinstaller
-pyinstaller ChatApp.spec
+pyinstaller ChatApp_linux.spec
+```
+<br>
+
+> For Windows:
+```python
+env\Scripts\activate
+pip install pyinstaller
+pyinstaller ChatApp_windows.spec
 ```
 
 <br><br>

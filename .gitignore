@@ -12,7 +12,6 @@ mlita_env/
 
 build/
 dist/
-*.spec
 
 .vscode/
 .idea/
@@ -30,3 +29,12 @@ Thumbs.db
 data/
 
 *~
+
+# pytest
+.pytest_cache/
+.cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.pytest_cache/
+test-results/
