@@ -15,7 +15,22 @@ pip install -r requerements.txt
 python -m src.main
 ```
 
-<br><br>
+
+### Run tests:
+```python
+pip install -r requirements-dev.txt
+```
+```python
+pytest tests/ -v --tb=no 
+```
+<br>
+> for more test details:
+
+```python
+pytest tests/ -v
+```
+
+<br>
 
 ## Build manually (get .exe, .bin)
 ```python
@@ -23,7 +38,3 @@ source env/bin/activate
 pip install pyinstaller
 pyinstaller ChatApp.spec
 ```
-
-<br><br>
-
-## Ready-made application

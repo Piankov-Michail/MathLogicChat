@@ -44,6 +44,12 @@ else:
 font_dir = resources_dir / "fonts"
 data_dir = exe_dir / "data"
 
+chats_dir = data_dir / "chats"
+config_file = data_dir / "config.json"
+
+os.makedirs(chats_dir, exist_ok=True)
+os.makedirs(data_dir, exist_ok=True)
+
 try:
     LabelBase.register(
         name='Emoji',
@@ -59,9 +65,6 @@ try:
     )
 except Exception as e:
     print("Не удалось загрузить Roboto шрифт:", e)
-
-chats_dir = data_dir / "chats"
-config_file = data_dir / "config.json"
 
 
 class LLM:

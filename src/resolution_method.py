@@ -420,18 +420,23 @@ def resolve_clauses(c1, c2):
     return results
 
 def resolution_proof(kb_clauses):
+    output_lines = []
+    
+    def log(message):
+        output_lines.append(message)
+    
     clause_list = list(kb_clauses)
     filtered = []
     for c in clause_list:
         if not contains_complementary_pair(c):
             filtered.append(c)
         else:
-            print(f"Пропущена тавтология: {list(c)}")
+            log(f"Пропущена тавтология: {list(c)}")
     clause_list = filtered
 
-    print("\n=== Начальные клаузы ===")
+    log("\n=== Начальные клаузы ===")
     for i, c in enumerate(clause_list):
-        print(f"{i+1}: {list(c)}")
+        log(f"{i+1}: {list(c)}")
 
     step = 1
     n_start = len(clause_list)
@@ -448,63 +453,56 @@ def resolution_proof(kb_clauses):
                 resolvents_info = resolve_clauses(c1, c2)
                 for res, lit1, lit2, theta in resolvents_info:
                     if len(res) == 0:
-                        print(f"\nШаг {step}: Резолюция между клаузами {i+1} и {j+1}")
-                        print(f"    Клауза {i+1}: {list(c1)}")
-                        print(f"    Клауза {j+1}: {list(c2)}")
-                        print(f"    Резольвируемые литералы: {lit1} и {lit2}")
-                        print(f"    Подстановка: {theta}")
-                        print(f"    ➤ Получена пустая клауза! Противоречие найдено.")
-                        return True
+                        log(f"\nШаг {step}: Резолюция между клаузами {i+1} и {j+1}")
+                        log(f"    Клауза {i+1}: {list(c1)}")
+                        log(f"    Клауза {j+1}: {list(c2)}")
+                        log(f"    Резольвируемые литералы: {lit1} и {lit2}")
+                        log(f"    Подстановка: {theta}")
+                        log(f"    ➤ Получена пустая клауза! Противоречие найдено.")
+                        return True, "\n".join(output_lines)
                     if res not in clause_list:
                         new_resolvents.append((res, i, j, lit1, lit2, theta))
                         found_new = True
 
         if not found_new:
-            print("\nНовых клауз больше нет. Противоречие не найдено.")
-            return False
+            log("\nНовых клауз больше нет. Противоречие не найдено.")
+            return False, "\n".join(output_lines)
 
-        print(f"\n=== Шаг {step} ===")
+        log(f"\n=== Шаг {step} ===")
         added_any = False
         for res, i, j, lit1, lit2, theta in new_resolvents:
             if res in clause_list:
                 continue
             clause_list.append(res)
             idx = len(clause_list)
-            print(f"Резолюция {i+1} & {j+1} → клауза {idx}")
-            print(f"  {list(clause_list[i])}")
-            print(f"  {list(clause_list[j])}")
-            print(f"  Литералы: {lit1} и {lit2}")
-            print(f"  Подстановка: {theta}")
-            print(f"  ➤ {list(res)}")
+            log(f"Резолюция {i+1} & {j+1} → клауза {idx}")
+            log(f"  {list(clause_list[i])}")
+            log(f"  {list(clause_list[j])}")
+            log(f"  Литералы: {lit1} и {lit2}")
+            log(f"  Подстановка: {theta}")
+            log(f"  ➤ {list(res)}")
             added_any = True
 
         if not added_any:
-            print("Нет новых клауз для добавления.")
+            log("Нет новых клауз для добавления.")
             break
 
         step += 1
         if step > 50:
-            print("Достигнут лимит шагов (50). Прекращаем.")
+            log("Достигнут лимит шагов (50). Прекращаем.")
             break
 
-    print("\nДоказательство не удалось.")
-    return False
-
-import io
-import sys
-from contextlib import redirect_stdout
+    log("\nДоказательство не удалось.")
+    return False, "\n".join(output_lines)
 
 def solve_logic_task(data: dict) -> str:
     try:
         kb = parse_statements_and_goal(data)
         
-        f = io.StringIO()
-        with redirect_stdout(f):
-            success = resolution_proof(kb)
-            result = "Доказательство успешно!" if success else "Доказательство не удалось."
+        success, log = resolution_proof(kb)
+        result = "Доказательство успешно!" if success else "Доказательство не удалось."
         
-        output = f.getvalue()
-        return str(data) + output + "\n" + result
+        return str(data) + log + "\n" + result
     except Exception as e:
         return f"Ошибка при решении задачи:\n{str(e)}"
 
