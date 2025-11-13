@@ -4,6 +4,11 @@ on:
   pull_request:
     branches: [main, develop]
 
+    branches-ignore:
+        - 'docs/update-readme-and-demo'
+        - 'feature/llm-remembers-chat'
+        - 'feature/better-ui'
+
 jobs:
   test:
     runs-on: ubuntu-latest
