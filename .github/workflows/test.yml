@@ -8,6 +8,7 @@ on:
         - 'docs/update-readme-and-demo'
         - 'feature/llm-remembers-chat'
         - 'feature/better-ui'
+        - 'tests/improve-tests'
 
 jobs:
   test:
