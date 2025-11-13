@@ -4,14 +4,14 @@ on:
   pull_request:
     branches: [main, develop]
 
-    branches-ignore:
-        - 'docs/update-readme-and-demo'
-        - 'feature/llm-remembers-chat'
-        - 'feature/better-ui'
-        - 'tests/improve-tests'
-
 jobs:
   test:
+    if: |
+      !startsWith(github.head_ref, 'docs/update-readme-and-demo') &&
+      !startsWith(github.head_ref, 'feature/llm-remembers-chat') &&
+      !startsWith(github.head_ref, 'feature/better-ui') &&
+      !startsWith(github.head_ref, 'tests/improve-tests')
+
     runs-on: ubuntu-latest
     steps:
       - name: 🛎️ Checkout
