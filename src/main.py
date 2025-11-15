@@ -335,7 +335,38 @@ class ChatApp(App):
             data = json.loads(clean_json_str)
             print(data)
             full_report = solve_logic_task(data)
-            return full_report
+            
+            explanation_prompt = (
+                "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
+                "Исходная задача:\n"
+                f"{task}\n\n"
+                "Формализованная задача:\n"
+                f"{json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
+                "результат решения (лог алгоритма резолюции):\n"
+                f"{full_report}\n\n"
+                "Объясни:\n"
+                "1. Что означают формальные записи в JSON (расшифруй предикаты и кванторы)\n"
+                "2. Как работал метод резолюции - основные шаги доказательства\n"
+                "3. Был ли найден ответ и что он означает\n"
+                "4. Простой вывод на естественном языке\n\n"
+                "Будь понятным и дружелюбным, используй примеры если нужно."
+            )
+
+            user_prompt = f"Объясни эту задачу:\n{task}"
+            explanation_response = self.llm.client.chat.completions.create(
+                model=self.llm.model,
+                messages=[
+                    {"role": "system", "content": explanation_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3, 
+                max_tokens=2000,
+                stream=False
+            )
+        
+            explanation = explanation_response.choices[0].message.content.strip()
+            final_result = explanation
+            return final_result
             
         except json.JSONDecodeError as e:
             return f"Ошибка парсинга JSON от LLM:\n{str(e)}\n\nПолученный ответ:\n{raw_response}\n\nОчищенный JSON:\n{clean_json_str}"
@@ -849,7 +880,6 @@ class ChatApp(App):
                         event["tool_call"]["function"]["name"], args
                     )
                     full_text += "\n" + tool_response
-
             self.update_label(label, full_text, is_final=True)
             if self.streaming_chat_id:
                 self.save_message_to_chat_in_chat(full_text, is_user=False, chat_id=self.streaming_chat_id)
