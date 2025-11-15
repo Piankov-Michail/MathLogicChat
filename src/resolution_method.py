@@ -1,525 +1,1529 @@
-from itertools import count
-import copy
 import re
+from typing import List, Dict, Any, Union, Optional, Set, Tuple, FrozenSet
+from collections import defaultdict, deque
+import copy
+import json
+import io
+import sys
 
-skolem_counter = count(0)
 
-def new_skolem():
-    return f"s{next(skolem_counter)}"
-
-def split_top_level_commas(s):
-    parts = []
-    current = []
-    depth = 0
-    for char in s:
-        if char == '(':
-            depth += 1
-        elif char == ')':
-            depth -= 1
-        elif char == ',' and depth == 0:
-            parts.append(''.join(current).strip())
-            current = []
-            continue
-        current.append(char)
-    parts.append(''.join(current).strip())
-    return parts
-
-def split_top_level_op(s, op='∧'):
-    parts = []
-    current = []
-    depth = 0
-    for char in s:
-        if char == '(':
-            depth += 1
-        elif char == ')':
-            depth -= 1
-        elif char == op and depth == 0:
-            parts.append(''.join(current).strip())
-            current = []
-            continue
-        current.append(char)
-    parts.append(''.join(current).strip())
-    return [p for p in parts if p]
-
-def is_negated(literal):
-    return literal.startswith("¬") or literal.startswith("~") or literal.startswith("!")
-
-def get_positive_form(literal):
-    if is_negated(literal):
-        if literal.startswith("¬"):
-            return literal[1:].strip()
-        elif literal.startswith("~"):
-            return literal[1:].strip()
-        elif literal.startswith("!"):
-            return literal[1:].strip()
-    return literal
-
-def negate_predicate(pred_name):
-    if pred_name.startswith("not_"):
-        return pred_name[4:]
-    else:
-        return "not_" + pred_name
-
-def parse_atom(atom_str, var_to_const=None):
-    atom_str = atom_str.strip()
-    var_to_const = var_to_const or {}
+class Node:
+    def __str__(self):
+        return self.to_string()
     
-    pred_match = re.match(r"([a-zA-Z_]\w*)\s*\(([^)]*)\)", atom_str)
-    if pred_match:
-        pred_name = pred_match.group(1)
-        args_str = pred_match.group(2).strip()
+    def to_string(self) -> str:
+        raise NotImplementedError
+    
+    def clone(self) -> 'Node':
+        raise NotImplementedError
+    
+    def apply_transformations(self) -> 'Node':
+        # Шаг 1: Удалить эквивалентности
+        result = self.eliminate_equivalence()
+        # Шаг 2: Удалить импликации
+        result = result.eliminate_implication()
+        # Шаги 3-6: Переместить отрицания внутрь
+        result = result.move_negation_inward()
+        # Шаг 7: Вынести кванторы влево
+        result = result.pull_quantifiers_left()
+        # Шаг 8: Преобразовать к КНФ
+        result = result.convert_to_cnf()
+        return result
+    
+    def eliminate_equivalence(self) -> 'Node':
+        raise NotImplementedError
+    
+    def eliminate_implication(self) -> 'Node':
+        raise NotImplementedError
+    
+    def move_negation_inward(self) -> 'Node':
+        raise NotImplementedError
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        raise NotImplementedError
+    
+    def convert_to_cnf(self) -> 'Node':
+        raise NotImplementedError
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        if universal_vars is None:
+            universal_vars = []
+        if skolem_counter is None:
+            skolem_counter = {'count': 0}
+        raise NotImplementedError
+    
+    def remove_quantifiers(self) -> 'Node':
+        raise NotImplementedError
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        raise NotImplementedError
+
+
+class Term:
+    def __str__(self):
+        raise NotImplementedError
+    
+    def clone(self) -> 'Term':
+        raise NotImplementedError
+    
+    def contains_variable(self, var_name: str) -> bool:
+        raise NotImplementedError
+    
+    def substitute(self, substitution: Dict[str, 'Term']) -> 'Term':
+        raise NotImplementedError
+    
+    def get_name(self) -> str:
+        return str(self)
+
+
+class Variable(Term):
+    def __init__(self, name: str):
+        self.name = name
+    
+    def __str__(self):
+        return self.name
+    
+    def clone(self) -> 'Variable':
+        return Variable(self.name)
+    
+    def contains_variable(self, var_name: str) -> bool:
+        return self.name == var_name
+    
+    def substitute(self, substitution: Dict[str, 'Term']) -> 'Term':
+        return substitution.get(self.name, self)
+    
+    def get_name(self) -> str:
+        return self.name
+
+
+class Constant(Term):
+    def __init__(self, name: str):
+        self.name = name
+    
+    def __str__(self):
+        return self.name
+    
+    def clone(self) -> 'Constant':
+        return Constant(self.name)
+    
+    def contains_variable(self, var_name: str) -> bool:
+        return False
+    
+    def substitute(self, substitution: Dict[str, 'Term']) -> 'Term':
+        return self
+    
+    def get_name(self) -> str:
+        return self.name
+
+
+class Function(Term):
+    def __init__(self, name: str, args: List[Term]):
+        self.name = name
+        self.args = args
+    
+    def __str__(self):
+        if self.args:
+            args_str = ', '.join(str(arg) for arg in self.args)
+            return f"{self.name}({args_str})"
+        return self.name
+    
+    def clone(self) -> 'Function':
+        return Function(self.name, [arg.clone() for arg in self.args])
+    
+    def contains_variable(self, var_name: str) -> bool:
+        return any(arg.contains_variable(var_name) for arg in self.args)
+    
+    def substitute(self, substitution: Dict[str, 'Term']) -> 'Term':
+        return Function(self.name, [arg.substitute(substitution) for arg in self.args])
+    
+    def get_name(self) -> str:
+        return str(self)
+
+
+class Unifier:
+    
+    @staticmethod
+    def unify(term1: Term, term2: Term, substitution: Dict[str, Term] = None) -> Optional[Dict[str, Term]]:
+        if substitution is None:
+            substitution = {}
         
-        if args_str:
-            args = [arg.strip() for arg in args_str.split(",")]
-            args = [var_to_const.get(arg, arg) for arg in args]
-            return (pred_name,) + tuple(args)
-        else:
-            return (pred_name,)
-    
-    atom = var_to_const.get(atom_str, atom_str)
-    return (atom,)
-
-def process_literal(literal, var_to_const=None, is_antecedent=False):
-    literal = literal.strip()
-    var_to_const = var_to_const or {}
-    
-    is_neg = is_negated(literal)
-    pos_literal = get_positive_form(literal)
-    
-    atom_result = parse_atom(pos_literal, var_to_const)
-    
-    if isinstance(atom_result, tuple):
-        pred_name = atom_result[0]
-        args = atom_result[1:]
+        term1 = term1.substitute(substitution)
+        term2 = term2.substitute(substitution)
         
-        if is_neg:
-            return (negate_predicate(pred_name),) + args
-        else:
-            if is_antecedent:
-                return (negate_predicate(pred_name),) + args
-            else:
-                return (pred_name,) + args
-    else:
-        atom = atom_result
-        if is_neg:
-            return ("not_" + atom,)
-        else:
-            if is_antecedent:
-                return ("not_" + atom,)
-            else:
-                return (atom,)
-
-def process_all_statement(stmt):
-    inner = stmt[4:-1].strip()
-    parts = split_top_level_commas(inner)
-    
-    if len(parts) < 2:
-        raise ValueError(f"Недостаточно аргументов в all: {stmt}")
-    
-    var_list = [v.strip() for v in parts[:-1]]
-    body = parts[-1].strip()
-    
-    var_to_upper = {var: var.upper() for var in var_list}
-    
-    for var, upper in var_to_upper.items():
-        var_escaped = re.escape(var)
-        body = re.sub(rf'\b{var_escaped}\b', upper, body)
-    
-    if "→" in body:
-        antecedent, consequent = [part.strip() for part in body.split("→", 1)]
+        if str(term1) == str(term2):
+            return substitution
         
-        if antecedent.startswith("(") and antecedent.endswith(")"):
-            antecedent = antecedent[1:-1].strip()
-        if consequent.startswith("(") and consequent.endswith(")"):
-            consequent = consequent[1:-1].strip()
+        if isinstance(term1, Variable):
+            return Unifier._unify_variable(term1, term2, substitution)
         
-        ant_lits = split_top_level_op(antecedent, '∧') if "∧" in antecedent else [antecedent]
-        cons_lits = split_top_level_op(consequent, '∨') if "∨" in consequent else [consequent]
+        if isinstance(term2, Variable):
+            return Unifier._unify_variable(term2, term1, substitution)
         
-        clause_lits = []
-        
-        for lit_str in ant_lits:
-            lit_str = lit_str.strip()
-            if not lit_str:
-                continue
-            
-            if is_negated(lit_str):
-                pos_lit = get_positive_form(lit_str)
-                processed = process_literal(pos_lit, var_to_upper, is_antecedent=False)
-                clause_lits.append(processed)
-            else:
-                processed = process_literal(lit_str, var_to_upper, is_antecedent=True)
-                clause_lits.append(processed)
-        
-        for lit_str in cons_lits:
-            lit_str = lit_str.strip()
-            if not lit_str:
-                continue
-            
-            if lit_str.startswith("all(") and lit_str.endswith(")"):
-                nested_clauses = process_all_statement(lit_str)
-                for nested_clause in nested_clauses:
-                    clause_lits.extend(list(nested_clause))
-            else:
-                if is_negated(lit_str):
-                    pos_lit = get_positive_form(lit_str)
-                    processed = process_literal(pos_lit, var_to_upper, is_antecedent=True)
-                    clause_lits.append(processed)
-                else:
-                    processed = process_literal(lit_str, var_to_upper, is_antecedent=False)
-                    clause_lits.append(processed)
-        
-        return [frozenset(clause_lits)]
-    
-    else:
-        processed = process_literal(body, var_to_upper, is_antecedent=False)
-        return [frozenset({processed})]
-
-def process_some_statement(stmt):
-    inner = stmt[5:-1].strip()
-    parts = split_top_level_commas(inner)
-    
-    if len(parts) < 2:
-        raise ValueError(f"Недостаточно аргументов в some: {stmt}")
-    
-    var_list = [v.strip() for v in parts[:-1]]
-    body = parts[-1].strip()
-    
-    skolem_consts = [new_skolem() for _ in var_list]
-    var_to_const = dict(zip(var_list, skolem_consts))
-    
-    body_replaced = body
-    for var, const in zip(var_list, skolem_consts):
-        var_escaped = re.escape(var)
-        body_replaced = re.sub(rf'\b{var_escaped}\b', const, body_replaced)
-    
-    literals = split_top_level_op(body_replaced, '∧')
-    clauses = []
-    
-    for lit_str in literals:
-        lit_str = lit_str.strip()
-        if not lit_str:
-            continue
-        
-        if lit_str.startswith("all(") and lit_str.endswith(")"):
-            nested_clauses = process_all_statement(lit_str)
-            clauses.extend(nested_clauses)
-        elif lit_str.startswith("some(") and lit_str.endswith(")"):
-            raise ValueError("Nested some not supported yet")
-        else:
-            processed = process_literal(lit_str, {})
-            clauses.append(frozenset({processed}))
-    
-    return clauses
-
-def process_atomic_statement(stmt):
-    stmt = stmt.strip()
-    
-    if is_negated(stmt):
-        pos_stmt = get_positive_form(stmt)
-        processed = process_literal(pos_stmt, {})
-        return [frozenset({processed})]
-    else:
-        processed = process_literal(stmt, {})
-        return [frozenset({processed})]
-
-def parse_statements_and_goal(data):
-    global skolem_counter
-    skolem_counter = count(0)
-    kb_clauses = []
-    
-    for stmt in data["statements"]:
-        stmt = stmt.strip()
-        
-        if not stmt:
-            continue
-        
-        if stmt.startswith("some(") and stmt.endswith(")"):
-            clauses = process_some_statement(stmt)
-            kb_clauses.extend(clauses)
-        
-        elif stmt.startswith("all(") and stmt.endswith(")"):
-            clauses = process_all_statement(stmt)
-            kb_clauses.extend(clauses)
-        
-        else:
-            try:
-                clauses = process_atomic_statement(stmt)
-                kb_clauses.extend(clauses)
-            except Exception as e:
-                raise ValueError(f"Ошибка при обработке атомарного утверждения '{stmt}': {str(e)}")
-    
-    goal = data["goal"].strip()
-    
-    if not goal:
-        raise ValueError("Цель не может быть пустой")
-    
-    if goal.startswith("all(") and goal.endswith(")"):
-        clauses = process_all_statement(goal)
-        for clause in clauses:
-            vars_set = set()
-            for lit in clause:
-                for arg in lit[1:]:
-                    if is_variable(arg):
-                        vars_set.add(arg)
-            var_to_skolem = {v: new_skolem() for v in vars_set}
-            
-            for lit in clause:
-                comp_lit = complement(lit)
-                sub_lit = substitute(comp_lit, var_to_skolem)
-                kb_clauses.append(frozenset({sub_lit}))
-    
-    elif is_negated(goal):
-        pos_goal = get_positive_form(goal)
-        processed = process_literal(pos_goal, {})
-        kb_clauses.append(frozenset({processed}))
-    
-    else:
-        processed = process_literal(goal, {})
-        if isinstance(processed, tuple):
-            negated = (negate_predicate(processed[0]),) + processed[1:]
-        else:
-            negated = ("not_" + processed,)
-        kb_clauses.append(frozenset({negated}))
-    
-    filtered_clauses = []
-    seen = set()
-    
-    for clause in kb_clauses:
-        if contains_complementary_pair(clause):
-            continue
-        
-        clause_tuple = tuple(sorted(clause))
-        if clause_tuple in seen:
-            continue
-        
-        seen.add(clause_tuple)
-        filtered_clauses.append(clause)
-    
-    return filtered_clauses
-
-def contains_complementary_pair(clause):
-    literals = list(clause)
-    for i in range(len(literals)):
-        for j in range(i + 1, len(literals)):
-            lit1 = literals[i]
-            lit2 = literals[j]
-            
-            if isinstance(lit1, tuple) and isinstance(lit2, tuple):
-                name1, name2 = lit1[0], lit2[0]
-                args1, args2 = lit1[1:], lit2[1:]
-                
-                if args1 == args2:
-                    if (name1.startswith("not_") and name1[4:] == name2) or \
-                       (name2.startswith("not_") and name2[4:] == name1):
-                        return True
-    return False
-
-def print_clauses(clauses):
-    for i, clause in enumerate(clauses, 1):
-        literals = []
-        for lit in clause:
-            if isinstance(lit, tuple):
-                pred = lit[0]
-                args = lit[1:]
-                if args:
-                    literals.append(f"{pred}({', '.join(args)})")
-                else:
-                    literals.append(pred)
-            else:
-                literals.append(str(lit))
-        print(f"{i}: {' ∨ '.join(literals)}")
-
-def is_variable(x):
-    return isinstance(x, str) and x[0].isupper()
-
-def unify_var(var, x, theta):
-    if var in theta:
-        return unify(theta[var], x, theta)
-    elif x in theta:
-        return unify(var, theta[x], theta)
-    else:
-        theta[var] = x
-        return theta
-
-def unify(x, y, theta=None):
-    if theta is None:
-        theta = {}
-    if theta is None:
-        return None
-    if x == y:
-        return theta
-    if is_variable(x):
-        return unify_var(x, y, theta)
-    if is_variable(y):
-        return unify_var(y, x, theta)
-    if isinstance(x, tuple) and isinstance(y, tuple):
-        if x[0] != y[0] or len(x) != len(y):
-            return None
-        for i in range(1, len(x)):
-            theta = unify(x[i], y[i], theta)
-            if theta is None:
+        if isinstance(term1, Function) and isinstance(term2, Function):
+            if term1.name != term2.name or len(term1.args) != len(term2.args):
                 return None
-        return theta
-    return None
-
-def substitute(literal, theta):
-    if is_variable(literal):
-        return theta.get(literal, literal)
-    if isinstance(literal, tuple):
-        return tuple(substitute(arg, theta) for arg in literal)
-    return literal
-
-def negate_literal(lit):
-    if lit.startswith('not_'):
-        return lit[4:]
-    else:
-        return 'not_' + lit
-
-def complement(lit):
-    if isinstance(lit, tuple):
-        pred = lit[0]
-        args = lit[1:]
-        if pred.startswith('not_'):
-            return (pred[4:],) + args
-        else:
-            return ('not_' + pred,) + args
-    else:
-        if lit.startswith('not_'):
-            return lit[4:]
-        else:
-            return 'not_' + lit
-
-def resolve_clauses(c1, c2):
-    results = []
-    for l1 in c1:
-        for l2 in c2:
-            comp_l1 = complement(l1)
-            if comp_l1[0] == l2[0] and len(comp_l1) == len(l2):
-                theta = unify(comp_l1, l2, {})
-                if theta is not None:
-                    sub_l1 = substitute(l1, theta)
-                    sub_l2 = substitute(l2, theta)
-
-                    new_clause_literals = []
-                    for l in c1:
-                        sl = substitute(l, theta)
-                        if sl != sub_l1:
-                            new_clause_literals.append(sl)
-                    for l in c2:
-                        sl = substitute(l, theta)
-                        if sl != sub_l2:
-                            new_clause_literals.append(sl)
-
-                    new_clause = frozenset(new_clause_literals)
-
-                    if contains_complementary_pair(new_clause):
-                        continue
-
-                    results.append((new_clause, l1, l2, theta))
-    return results
-
-def resolution_proof(kb_clauses):
-    output_lines = []
+            
+            current_subst = substitution.copy()
+            for arg1, arg2 in zip(term1.args, term2.args):
+                result = Unifier.unify(arg1, arg2, current_subst)
+                if result is None:
+                    return None
+                current_subst = result
+            
+            return current_subst
+        
+        return None
     
-    def log(message):
-        output_lines.append(message)
+    @staticmethod
+    def _unify_variable(var: Variable, term: Term, substitution: Dict[str, Term]) -> Optional[Dict[str, Term]]:
+        var_name = var.name
+        
+        if var_name in substitution:
+            return Unifier.unify(substitution[var_name], term, substitution)
+        
+        if term.contains_variable(var_name):
+            return None
+        
+        new_substitution = substitution.copy()
+        new_substitution[var_name] = term
+        return new_substitution
+
+
+class Literal:
+    def __init__(self, predicate: str, args: List[Term], negated: bool = False):
+        self.predicate = predicate
+        self.args = args
+        self.negated = negated
     
-    clause_list = list(kb_clauses)
-    filtered = []
-    for c in clause_list:
-        if not contains_complementary_pair(c):
-            filtered.append(c)
+    def __str__(self):
+        args_str = ', '.join(str(arg) for arg in self.args)
+        pred_str = f"{self.predicate}({args_str})" if self.args else self.predicate
+        return f"¬{pred_str}" if self.negated else pred_str
+    
+    def __repr__(self):
+        return str(self)
+    
+    def __eq__(self, other):
+        if not isinstance(other, Literal):
+            return False
+        return (self.predicate == other.predicate and 
+                all(str(a1) == str(a2) for a1, a2 in zip(self.args, other.args)) and 
+                self.negated == other.negated)
+    
+    def __hash__(self):
+        return hash((self.predicate, tuple(str(arg) for arg in self.args), self.negated))
+    
+    def negate(self) -> 'Literal':
+        return Literal(self.predicate, self.args.copy(), not self.negated)
+    
+    def is_complementary(self, other: 'Literal') -> bool:
+        if self.predicate != other.predicate or self.negated == other.negated:
+            return False
+        return all(str(a1) == str(a2) for a1, a2 in zip(self.args, other.args))
+    
+    def most_general_unifier(self, other: 'Literal') -> Optional[Dict[str, Term]]:
+        if self.predicate != other.predicate or len(self.args) != len(other.args):
+            return None
+        
+        substitution = {}
+        for arg1, arg2 in zip(self.args, other.args):
+            result = Unifier.unify(arg1, arg2, substitution)
+            if result is None:
+                return None
+            substitution = result
+        
+        return substitution
+    
+    def substitute(self, substitution: Dict[str, Term]) -> 'Literal':
+        new_args = [arg.substitute(substitution) for arg in self.args]
+        return Literal(self.predicate, new_args, self.negated)
+
+
+class Clause:
+    def __init__(self, literals: Set[Literal]):
+        self.literals = literals
+    
+    def __str__(self):
+        if not self.literals:
+            return "□"
+        return " ∨ ".join(str(lit) for lit in sorted(self.literals, key=lambda x: str(x)))
+    
+    def __repr__(self):
+        return str(self)
+    
+    def __eq__(self, other):
+        if not isinstance(other, Clause):
+            return False
+        return self.literals == other.literals
+    
+    def __hash__(self):
+        return hash(frozenset(str(lit) for lit in self.literals))
+    
+    def is_empty(self) -> bool:
+        return len(self.literals) == 0
+    
+    def is_tautology(self) -> bool:
+        for lit1 in self.literals:
+            for lit2 in self.literals:
+                if lit1.predicate == lit2.predicate and lit1.negated != lit2.negated:
+                    if all(str(a1) == str(a2) for a1, a2 in zip(lit1.args, lit2.args)):
+                        return True
+        return False
+    
+    def resolve_with(self, other: 'Clause') -> List[Tuple['Clause', Dict[str, Term]]]:
+        resolvents = []
+        
+        for lit1 in self.literals:
+            for lit2 in other.literals:
+                if lit1.predicate == lit2.predicate and lit1.negated != lit2.negated:
+                    mgu = lit1.most_general_unifier(lit2)
+                    if mgu is not None:
+                        new_literals1 = {l.substitute(mgu) for l in self.literals - {lit1}}
+                        new_literals2 = {l.substitute(mgu) for l in other.literals - {lit2}}
+                        
+                        new_literals = new_literals1.union(new_literals2)
+                        
+                        new_clause = Clause(new_literals)
+                        
+                        if not new_clause.is_tautology():
+                            resolvents.append((new_clause, mgu))
+                        
+                        if new_clause.is_empty():
+                            resolvents.append((new_clause, mgu))
+        
+        return resolvents
+    
+    def get_variables(self) -> Set[str]:
+        variables = set()
+        for lit in self.literals:
+            for arg in lit.args:
+                if isinstance(arg, Variable):
+                    variables.add(arg.name)
+        return variables
+
+
+class VariableNode(Node):
+    def __init__(self, name: str):
+        self.name = name
+    
+    def to_string(self) -> str:
+        return self.name
+    
+    def clone(self) -> 'VariableNode':
+        return VariableNode(self.name)
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return self.clone()
+    
+    def eliminate_implication(self) -> 'Node':
+        return self.clone()
+    
+    def move_negation_inward(self) -> 'Node':
+        return self.clone()
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return self.clone()
+    
+    def convert_to_cnf(self) -> 'Node':
+        return self.clone()
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return self.clone()
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.clone()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        raise ValueError("Переменная не может быть преобразована в клаузы КНФ")
+
+
+class ConstantNode(Node):
+    def __init__(self, name: str):
+        self.name = name
+    
+    def to_string(self) -> str:
+        return self.name
+    
+    def clone(self) -> 'ConstantNode':
+        return ConstantNode(self.name)
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return self.clone()
+    
+    def eliminate_implication(self) -> 'Node':
+        return self.clone()
+    
+    def move_negation_inward(self) -> 'Node':
+        return self.clone()
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return self.clone()
+    
+    def convert_to_cnf(self) -> 'Node':
+        return self.clone()
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return self.clone()
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.clone()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        raise ValueError("Константа не может быть преобразована в клаузы КНФ")
+
+
+class SkolemFunctionNode(Node):
+    def __init__(self, base_name: str, args: List[Node]):
+        self.base_name = base_name
+        self.args = args
+        self.name = self._generate_name()
+    
+    def _generate_name(self) -> str:
+        return f"sk{len(self.args)}"
+    
+    def to_string(self) -> str:
+        if self.args:
+            args_str = ', '.join(str(arg) for arg in self.args)
+            return f"{self.name}({args_str})"
+        return self.name
+    
+    def clone(self) -> 'SkolemFunctionNode':
+        return SkolemFunctionNode(self.base_name, [arg.clone() for arg in self.args])
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.eliminate_equivalence() for arg in self.args])
+    
+    def eliminate_implication(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.eliminate_implication() for arg in self.args])
+    
+    def move_negation_inward(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.move_negation_inward() for arg in self.args])
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.pull_quantifiers_left() for arg in self.args])
+    
+    def convert_to_cnf(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.convert_to_cnf() for arg in self.args])
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.skolemize(universal_vars, skolem_counter) for arg in self.args])
+    
+    def remove_quantifiers(self) -> 'Node':
+        return SkolemFunctionNode(self.base_name, [arg.remove_quantifiers() for arg in self.args])
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        raise ValueError("Функция Сколема не может быть преобразована в клаузы КНФ")
+
+
+class PredicateNode(Node):
+    def __init__(self, name: str, args: List[Node]):
+        self.name = name
+        self.args = args
+    
+    def to_string(self) -> str:
+        if self.args:
+            args_str = ', '.join(str(arg) for arg in self.args)
+            return f"{self.name}({args_str})"
+        return self.name
+    
+    def clone(self) -> 'PredicateNode':
+        return PredicateNode(self.name, [arg.clone() for arg in self.args])
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return PredicateNode(self.name, [arg.eliminate_equivalence() for arg in self.args])
+    
+    def eliminate_implication(self) -> 'Node':
+        return PredicateNode(self.name, [arg.eliminate_implication() for arg in self.args])
+    
+    def move_negation_inward(self) -> 'Node':
+        return PredicateNode(self.name, [arg.move_negation_inward() for arg in self.args])
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return PredicateNode(self.name, [arg.pull_quantifiers_left() for arg in self.args])
+    
+    def convert_to_cnf(self) -> 'Node':
+        return PredicateNode(self.name, [arg.convert_to_cnf() for arg in self.args])
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return PredicateNode(self.name, [arg.skolemize(universal_vars, skolem_counter) for arg in self.args])
+    
+    def remove_quantifiers(self) -> 'Node':
+        return PredicateNode(self.name, [arg.remove_quantifiers() for arg in self.args])
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        args = []
+        for arg in self.args:
+            if isinstance(arg, VariableNode):
+                args.append(Variable(arg.name))
+            elif isinstance(arg, ConstantNode):
+                args.append(Constant(arg.name))
+            elif isinstance(arg, SkolemFunctionNode):
+                args.append(Constant(str(arg)))
+            else:
+                args.append(Constant(str(arg)))
+        
+        literal = Literal(self.name, args, negated=False)
+        return [Clause({literal})]
+
+
+class NotNode(Node):
+    def __init__(self, child: Node):
+        self.child = child
+    
+    def to_string(self) -> str:
+        if isinstance(self.child, (AndNode, OrNode, ImpliesNode, EquivNode, ForallNode, ExistsNode)):
+            return f"¬({self.child})"
+        return f"¬{self.child}"
+    
+    def clone(self) -> 'NotNode':
+        return NotNode(self.child.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        child_transformed = self.child.eliminate_equivalence()
+        
+        if isinstance(child_transformed, EquivNode):
+            a = child_transformed.left.eliminate_equivalence()
+            b = child_transformed.right.eliminate_equivalence()
+            return OrNode(
+                AndNode(a.clone(), NotNode(b.clone())),
+                AndNode(NotNode(a.clone()), b.clone())
+            )
+        
+        return NotNode(child_transformed)
+    
+    def eliminate_implication(self) -> 'Node':
+        child_transformed = self.child.eliminate_implication()
+        
+        if isinstance(child_transformed, ImpliesNode):
+            a = child_transformed.left.eliminate_implication()
+            b = child_transformed.right.eliminate_implication()
+            return AndNode(a.clone(), NotNode(b.clone()))
+        
+        return NotNode(child_transformed)
+    
+    def move_negation_inward(self) -> 'Node':
+        child = self.child.move_negation_inward()
+        
+        if isinstance(child, ForallNode):
+            return ExistsNode(child.var_name, NotNode(child.body).move_negation_inward())
+        
+        if isinstance(child, ExistsNode):
+            return ForallNode(child.var_name, NotNode(child.body).move_negation_inward())
+        
+        if isinstance(child, AndNode):
+            return OrNode(
+                NotNode(child.left).move_negation_inward(),
+                NotNode(child.right).move_negation_inward()
+            )
+        
+        if isinstance(child, OrNode):
+            return AndNode(
+                NotNode(child.left).move_negation_inward(),
+                NotNode(child.right).move_negation_inward()
+            )
+        
+        if isinstance(child, (PredicateNode, VariableNode, ConstantNode)):
+            return NotNode(child)
+        
+        if isinstance(child, NotNode):
+            return child.child.move_negation_inward()
+        
+        return NotNode(child)
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        child = self.child.pull_quantifiers_left()
+        return NotNode(child)
+    
+    def convert_to_cnf(self) -> 'Node':
+        child = self.child.convert_to_cnf()
+        
+        if isinstance(child, AndNode):
+            return OrNode(
+                NotNode(child.left).convert_to_cnf(),
+                NotNode(child.right).convert_to_cnf()
+            )
+        
+        if isinstance(child, OrNode):
+            return AndNode(
+                NotNode(child.left).convert_to_cnf(),
+                NotNode(child.right).convert_to_cnf()
+            )
+        
+        return NotNode(child)
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return NotNode(self.child.skolemize(universal_vars, skolem_counter))
+    
+    def remove_quantifiers(self) -> 'Node':
+        return NotNode(self.child.remove_quantifiers())
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        if isinstance(self.child, PredicateNode):
+            args = []
+            for arg in self.child.args:
+                if isinstance(arg, VariableNode):
+                    args.append(Variable(arg.name))
+                elif isinstance(arg, ConstantNode):
+                    args.append(Constant(arg.name))
+                elif isinstance(arg, SkolemFunctionNode):
+                    args.append(Constant(str(arg)))
+                else:
+                    args.append(Constant(str(arg)))
+            
+            literal = Literal(self.child.name, args, negated=True)
+            return [Clause({literal})]
+        raise ValueError("Отрицание может быть применено только к предикату в КНФ")
+
+
+class AndNode(Node):
+    def __init__(self, left: Node, right: Node):
+        self.left = left
+        self.right = right
+    
+    def to_string(self) -> str:
+        left_str = str(self.left)
+        right_str = str(self.right)
+        if isinstance(self.left, OrNode):
+            left_str = f"({left_str})"
+        if isinstance(self.right, OrNode):
+            right_str = f"({right_str})"
+        return f"{left_str} ∧ {right_str}"
+    
+    def clone(self) -> 'AndNode':
+        return AndNode(self.left.clone(), self.right.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return AndNode(
+            self.left.eliminate_equivalence(),
+            self.right.eliminate_equivalence()
+        )
+    
+    def eliminate_implication(self) -> 'Node':
+        return AndNode(
+            self.left.eliminate_implication(),
+            self.right.eliminate_implication()
+        )
+    
+    def move_negation_inward(self) -> 'Node':
+        return AndNode(
+            self.left.move_negation_inward(),
+            self.right.move_negation_inward()
+        )
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        left = self.left.pull_quantifiers_left()
+        right = self.right.pull_quantifiers_left()
+        return AndNode(left, right)
+    
+    def convert_to_cnf(self) -> 'Node':
+        left = self.left.convert_to_cnf()
+        right = self.right.convert_to_cnf()
+        
+        if isinstance(left, OrNode):
+            return AndNode(left, right)
+        
+        if isinstance(right, OrNode):
+            return AndNode(left, right)
+        
+        return AndNode(left, right)
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return AndNode(
+            self.left.skolemize(universal_vars, skolem_counter),
+            self.right.skolemize(universal_vars, skolem_counter)
+        )
+    
+    def remove_quantifiers(self) -> 'Node':
+        return AndNode(
+            self.left.remove_quantifiers(),
+            self.right.remove_quantifiers()
+        )
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        left_clauses = self.left.to_cnf_clauses()
+        right_clauses = self.right.to_cnf_clauses()
+        return left_clauses + right_clauses
+
+
+class OrNode(Node):
+    def __init__(self, left: Node, right: Node):
+        self.left = left
+        self.right = right
+    
+    def to_string(self) -> str:
+        return f"{self.left} ∨ {self.right}"
+    
+    def clone(self) -> 'OrNode':
+        return OrNode(self.left.clone(), self.right.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return OrNode(
+            self.left.eliminate_equivalence(),
+            self.right.eliminate_equivalence()
+        )
+    
+    def eliminate_implication(self) -> 'Node':
+        return OrNode(
+            self.left.eliminate_implication(),
+            self.right.eliminate_implication()
+        )
+    
+    def move_negation_inward(self) -> 'Node':
+        return OrNode(
+            self.left.move_negation_inward(),
+            self.right.move_negation_inward()
+        )
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        left = self.left.pull_quantifiers_left()
+        right = self.right.pull_quantifiers_left()
+        return OrNode(left, right)
+    
+    def convert_to_cnf(self) -> 'Node':
+        left = self.left.convert_to_cnf()
+        right = self.right.convert_to_cnf()
+        
+        if isinstance(left, AndNode):
+            return AndNode(
+                OrNode(left.left.clone(), right.clone()).convert_to_cnf(),
+                OrNode(left.right.clone(), right.clone()).convert_to_cnf()
+            )
+        
+        if isinstance(right, AndNode):
+            return AndNode(
+                OrNode(left.clone(), right.left.clone()).convert_to_cnf(),
+                OrNode(left.clone(), right.right.clone()).convert_to_cnf()
+            )
+        
+        return OrNode(left, right)
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return OrNode(
+            self.left.skolemize(universal_vars, skolem_counter),
+            self.right.skolemize(universal_vars, skolem_counter)
+        )
+    
+    def remove_quantifiers(self) -> 'Node':
+        return OrNode(
+            self.left.remove_quantifiers(),
+            self.right.remove_quantifiers()
+        )
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        left_literals = self._extract_literals(self.left)
+        right_literals = self._extract_literals(self.right)
+        
+        all_literals = left_literals.union(right_literals)
+        
+        for lit1 in all_literals:
+            for lit2 in all_literals:
+                if lit1.predicate == lit2.predicate and lit1.negated != lit2.negated:
+                    if all(str(a1) == str(a2) for a1, a2 in zip(lit1.args, lit2.args)):
+                        return []
+        
+        return [Clause(all_literals)]
+    
+    def _extract_literals(self, node: Node) -> Set[Literal]:
+        if isinstance(node, PredicateNode):
+            args = []
+            for arg in node.args:
+                if isinstance(arg, VariableNode):
+                    args.append(Variable(arg.name))
+                elif isinstance(arg, ConstantNode):
+                    args.append(Constant(arg.name))
+                else:
+                    args.append(Constant(str(arg)))
+            return {Literal(node.name, args, negated=False)}
+        
+        if isinstance(node, NotNode) and isinstance(node.child, PredicateNode):
+            args = []
+            for arg in node.child.args:
+                if isinstance(arg, VariableNode):
+                    args.append(Variable(arg.name))
+                elif isinstance(arg, ConstantNode):
+                    args.append(Constant(arg.name))
+                else:
+                    args.append(Constant(str(arg)))
+            return {Literal(node.child.name, args, negated=True)}
+        
+        if isinstance(node, OrNode):
+            left_lits = self._extract_literals(node.left)
+            right_lits = self._extract_literals(node.right)
+            return left_lits.union(right_lits)
+        
+        if isinstance(node, AndNode):
+            raise ValueError("Некорректная КНФ: дизъюнкция содержит конъюнкцию")
+        
+        raise ValueError(f"Неизвестный тип узла в КНФ: {type(node)}")
+
+
+class ImpliesNode(Node):
+    def __init__(self, left: Node, right: Node):
+        self.left = left
+        self.right = right
+    
+    def to_string(self) -> str:
+        return f"{self.left} → {self.right}"
+    
+    def clone(self) -> 'ImpliesNode':
+        return ImpliesNode(self.left.clone(), self.right.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        left = self.left.eliminate_equivalence()
+        right = self.right.eliminate_equivalence()
+        return ImpliesNode(left, right)
+    
+    def eliminate_implication(self) -> 'Node':
+        left = self.left.eliminate_implication()
+        right = self.right.eliminate_implication()
+        return OrNode(NotNode(left), right)
+    
+    def move_negation_inward(self) -> 'Node':
+        return self.clone()
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return self.clone()
+    
+    def convert_to_cnf(self) -> 'Node':
+        return self.clone()
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return self.clone()
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.clone()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        return self.eliminate_implication().to_cnf_clauses()
+
+
+class EquivNode(Node):
+    def __init__(self, left: Node, right: Node):
+        self.left = left
+        self.right = right
+    
+    def to_string(self) -> str:
+        return f"{self.left} ↔ {self.right}"
+    
+    def clone(self) -> 'EquivNode':
+        return EquivNode(self.left.clone(), self.right.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        left = self.left.eliminate_equivalence()
+        right = self.right.eliminate_equivalence()
+        return AndNode(
+            OrNode(NotNode(left.clone()), right.clone()),
+            OrNode(left.clone(), NotNode(right.clone()))
+        )
+    
+    def eliminate_implication(self) -> 'Node':
+        return self.clone()
+    
+    def move_negation_inward(self) -> 'Node':
+        return self.clone()
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        return self.clone()
+    
+    def convert_to_cnf(self) -> 'Node':
+        return self.clone()
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        return self.clone()
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.clone()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        return self.eliminate_equivalence().to_cnf_clauses()
+
+
+class ForallNode(Node):
+    def __init__(self, var_name: str, body: Node):
+        self.var_name = var_name
+        self.body = body
+    
+    def to_string(self) -> str:
+        return f"∀{self.var_name}({self.body})"
+    
+    def clone(self) -> 'ForallNode':
+        return ForallNode(self.var_name, self.body.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return ForallNode(self.var_name, self.body.eliminate_equivalence())
+    
+    def eliminate_implication(self) -> 'Node':
+        return ForallNode(self.var_name, self.body.eliminate_implication())
+    
+    def move_negation_inward(self) -> 'Node':
+        return ForallNode(self.var_name, self.body.move_negation_inward())
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        body = self.body.pull_quantifiers_left()
+        return ForallNode(self.var_name, body)
+    
+    def convert_to_cnf(self) -> 'Node':
+        return ForallNode(self.var_name, self.body.convert_to_cnf())
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        if universal_vars is None:
+            universal_vars = []
+        if skolem_counter is None:
+            skolem_counter = {'count': 0}
+        
+        new_universal_vars = universal_vars + [self.var_name]
+        skolemized_body = self.body.skolemize(new_universal_vars, skolem_counter)
+        return skolemized_body
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.body.remove_quantifiers()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        return self.body.to_cnf_clauses()
+
+
+class ExistsNode(Node):
+    def __init__(self, var_name: str, body: Node):
+        self.var_name = var_name
+        self.body = body
+    
+    def to_string(self) -> str:
+        return f"∃{self.var_name}({self.body})"
+    
+    def clone(self) -> 'ExistsNode':
+        return ExistsNode(self.var_name, self.body.clone())
+    
+    def eliminate_equivalence(self) -> 'Node':
+        return ExistsNode(self.var_name, self.body.eliminate_equivalence())
+    
+    def eliminate_implication(self) -> 'Node':
+        return ExistsNode(self.var_name, self.body.eliminate_implication())
+    
+    def move_negation_inward(self) -> 'Node':
+        return ExistsNode(self.var_name, self.body.move_negation_inward())
+    
+    def pull_quantifiers_left(self) -> 'Node':
+        body = self.body.pull_quantifiers_left()
+        return ExistsNode(self.var_name, body)
+    
+    def convert_to_cnf(self) -> 'Node':
+        return ExistsNode(self.var_name, self.body.convert_to_cnf())
+    
+    def skolemize(self, universal_vars: List[str] = None, skolem_counter: Dict[str, int] = None) -> 'Node':
+        if universal_vars is None:
+            universal_vars = []
+        if skolem_counter is None:
+            skolem_counter = {'count': 0}
+        
+        skolem_counter['count'] += 1
+        skolem_id = skolem_counter['count']
+        
+        if not universal_vars:
+            skolem_constant = ConstantNode(f"c{skolem_id}")
+            replaced_body = self._replace_variable(self.body, self.var_name, skolem_constant)
         else:
-            log(f"Пропущена тавтология: {list(c)}")
-    clause_list = filtered
+            universal_var_nodes = [VariableNode(var) for var in universal_vars]
+            skolem_function = SkolemFunctionNode("f", universal_var_nodes)
+            replaced_body = self._replace_variable(self.body, self.var_name, skolem_function)
+        
+        return replaced_body.skolemize(universal_vars, skolem_counter)
+    
+    def _replace_variable(self, node: Node, var_name: str, replacement: Node) -> Node:
+        if isinstance(node, VariableNode):
+            if node.name == var_name:
+                return replacement.clone()
+            return node.clone()
+        
+        if isinstance(node, PredicateNode):
+            new_args = [self._replace_variable(arg, var_name, replacement) for arg in node.args]
+            return PredicateNode(node.name, new_args)
+        
+        if isinstance(node, NotNode):
+            new_child = self._replace_variable(node.child, var_name, replacement)
+            return NotNode(new_child)
+        
+        if isinstance(node, AndNode):
+            new_left = self._replace_variable(node.left, var_name, replacement)
+            new_right = self._replace_variable(node.right, var_name, replacement)
+            return AndNode(new_left, new_right)
+        
+        if isinstance(node, OrNode):
+            new_left = self._replace_variable(node.left, var_name, replacement)
+            new_right = self._replace_variable(node.right, var_name, replacement)
+            return OrNode(new_left, new_right)
+        
+        if isinstance(node, ForallNode):
+            if node.var_name == var_name:
+                return node.clone()
+            new_body = self._replace_variable(node.body, var_name, replacement)
+            return ForallNode(node.var_name, new_body)
+        
+        if isinstance(node, ExistsNode):
+            if node.var_name == var_name:
+                return node.clone()
+            new_body = self._replace_variable(node.body, var_name, replacement)
+            return ExistsNode(node.var_name, new_body)
+        
+        if isinstance(node, ConstantNode) or isinstance(node, SkolemFunctionNode):
+            return node.clone()
+        
+        return node.clone()
+    
+    def remove_quantifiers(self) -> 'Node':
+        return self.body.remove_quantifiers()
+    
+    def to_cnf_clauses(self) -> List['Clause']:
+        return self.body.to_cnf_clauses()
 
-    log("\n=== Начальные клаузы ===")
-    for i, c in enumerate(clause_list):
-        log(f"{i+1}: {list(c)}")
 
-    step = 1
-    n_start = len(clause_list)
+class Parser:
+    
+    @staticmethod
+    def parse(formula: str) -> Node:
+        formula = formula.strip()
+        if not formula:
+            raise ValueError("Пустая формула")
 
-    while True:
-        n = len(clause_list)
-        new_resolvents = []
-        found_new = False
+        if formula.startswith('∀(') or formula.startswith('∃('):
+            return Parser._parse_quantifier_with_parentheses(formula)
 
-        for i in range(n):
-            for j in range(i, n):
-                c1 = clause_list[i]
-                c2 = clause_list[j]
-                resolvents_info = resolve_clauses(c1, c2)
-                for res, lit1, lit2, theta in resolvents_info:
-                    if len(res) == 0:
-                        log(f"\nШаг {step}: Резолюция между клаузами {i+1} и {j+1}")
-                        log(f"    Клауза {i+1}: {list(c1)}")
-                        log(f"    Клауза {j+1}: {list(c2)}")
-                        log(f"    Резольвируемые литералы: {lit1} и {lit2}")
-                        log(f"    Подстановка: {theta}")
-                        log(f"    ➤ Получена пустая клауза! Противоречие найдено.")
-                        return True, "\n".join(output_lines)
-                    if res not in clause_list:
-                        new_resolvents.append((res, i, j, lit1, lit2, theta))
-                        found_new = True
+        if re.match(r'^[∀∃][a-zA-Z]+', formula):
+            return Parser._parse_quantifier(formula)
 
-        if not found_new:
-            log("\nНовых клауз больше нет. Противоречие не найдено.")
-            return False, "\n".join(output_lines)
+        return Parser._parse_implication(formula)
+    
+    @staticmethod
+    def _parse_quantifier_with_parentheses(formula: str) -> Node:
+        quantifier = formula[0]
+        level = 0
+        var_part_end = -1
 
-        log(f"\n=== Шаг {step} ===")
-        added_any = False
-        for res, i, j, lit1, lit2, theta in new_resolvents:
-            if res in clause_list:
+        for i in range(1, len(formula)):
+            if formula[i] == '(':
+                level += 1
+            elif formula[i] == ')':
+                level -= 1
+                if level == 0 and i < len(formula) - 1:
+                    level += 1
+            elif formula[i] == ',' and level == 1:
+                var_part_end = i
+                break
+
+        if var_part_end == -1:
+            raise ValueError(f"Не найден разделитель переменных и тела в кванторе: {formula}")
+
+        vars_str = formula[formula.find('(')+1:var_part_end].strip()
+        body_str = formula[var_part_end+1 : -1].strip()
+
+        var_names = [v.strip() for v in vars_str.split(',') if v.strip()]
+
+        body_node = Parser.parse(body_str)
+
+        node = body_node
+        for var in reversed(var_names):
+            if quantifier == '∀':
+                node = ForallNode(var, node)
+            elif quantifier == '∃':
+                node = ExistsNode(var, node)
+
+        return node
+    
+    @staticmethod
+    def _parse_quantifier(formula: str) -> Node:
+        quantifier = formula[0]
+        var_end = 1
+        while var_end < len(formula) and formula[var_end].isalnum():
+            var_end += 1
+        
+        if var_end == 1:
+            raise ValueError(f"Некорректный квантор: {formula}")
+        
+        var_name = formula[1:var_end].strip()
+        body = formula[var_end:].strip()
+        
+        if body.startswith('(') and body.endswith(')'):
+            body = body[1:-1].strip()
+        
+        body_node = Parser.parse(body)
+        
+        if quantifier == '∀':
+            return ForallNode(var_name, body_node)
+        elif quantifier == '∃':
+            return ExistsNode(var_name, body_node)
+        else:
+            raise ValueError(f"Неизвестный квантор: {quantifier}")
+    
+    @staticmethod
+    def _parse_implication(formula: str) -> Node:
+        level = 0
+        i = 0
+        while i < len(formula):
+            char = formula[i]
+            if char == '(':
+                level += 1
+            elif char == ')':
+                level -= 1
+            
+            if level == 0:
+                if i + 1 <= len(formula) and i > 0:
+                    if formula[i] == '→':
+                        left = formula[:i].strip()
+                        right = formula[i+1:].strip()
+                        return ImpliesNode(Parser.parse(left), Parser.parse(right))
+                    if formula[i] == '↔':
+                        left = formula[:i].strip()
+                        right = formula[i+1:].strip()
+                        return EquivNode(Parser.parse(left), Parser.parse(right))
+            i += 1
+        
+        return Parser._parse_or(formula)
+    
+    @staticmethod
+    def _parse_or(formula: str) -> Node:
+        level = 0
+        i = 0
+        while i < len(formula):
+            char = formula[i]
+            if char == '(':
+                level += 1
+            elif char == ')':
+                level -= 1
+            
+            if level == 0 and i > 0:
+                if formula[i] == '∨':
+                    left = formula[:i].strip()
+                    right = formula[i+1:].strip()
+                    return OrNode(Parser.parse(left), Parser.parse(right))
+            i += 1
+        
+        return Parser._parse_and(formula)
+    
+    @staticmethod
+    def _parse_and(formula: str) -> Node:
+        level = 0
+        i = 0
+        while i < len(formula):
+            char = formula[i]
+            if char == '(':
+                level += 1
+            elif char == ')':
+                level -= 1
+            
+            if level == 0 and i > 0:
+                if formula[i] == '∧':
+                    left = formula[:i].strip()
+                    right = formula[i+1:].strip()
+                    return AndNode(Parser.parse(left), Parser.parse(right))
+            i += 1
+        
+        return Parser._parse_not(formula)
+    
+    @staticmethod
+    def _parse_not(formula: str) -> Node:
+        formula = formula.strip()
+        if formula.startswith('¬'):
+            body = formula[1:].strip()
+            if body.startswith('(') and body.endswith(')'):
+                body = body[1:-1].strip()
+            return NotNode(Parser.parse(body))
+        
+        return Parser._parse_atomic(formula)
+    
+    @staticmethod
+    def _parse_atomic(formula: str) -> Node:
+        formula = formula.strip()
+        if formula.startswith('(') and formula.endswith(')'):
+            return Parser.parse(formula[1:-1].strip())
+        
+        if '(' in formula and formula.endswith(')'):
+            pred_end = formula.find('(')
+            pred_name = formula[:pred_end].strip()
+            args_str = formula[pred_end+1:-1].strip()
+            
+            args = []
+            current_arg = ""
+            level = 0
+            for char in args_str:
+                if char == '(':
+                    level += 1
+                elif char == ')':
+                    level -= 1
+                elif char == ',' and level == 0:
+                    if current_arg.strip():
+                        args.append(Parser.parse(current_arg.strip()))
+                    current_arg = ""
+                    continue
+                current_arg += char
+            
+            if current_arg.strip():
+                args.append(Parser.parse(current_arg.strip()))
+            
+            return PredicateNode(pred_name, args)
+        
+        if formula.startswith('c') and formula[1:].isdigit():
+            return ConstantNode(formula)
+        
+        return VariableNode(formula)
+
+
+def convert_formula_to_pnf(formula: str) -> str:
+    try:
+        tree = Parser.parse(formula)
+        pnf_tree = tree.apply_transformations()
+        return str(pnf_tree)
+    except Exception as e:
+        print(f"Ошибка при обработке формулы '{formula}': {str(e)}")
+        return formula
+
+
+def convert_formula_to_skolem(formula: str) -> str:
+    try:
+        tree = Parser.parse(formula)
+        pnf_tree = tree.apply_transformations()
+        skolem_tree = pnf_tree.skolemize()
+        return str(skolem_tree)
+    except Exception as e:
+        print(f"Ошибка при сколемизации формулы '{formula}': {str(e)}")
+        return formula
+
+
+def convert_to_clauses(formula: str) -> List[Clause]:
+    try:
+        tree = Parser.parse(formula)
+        pnf_tree = tree.apply_transformations()
+        skolem_tree = pnf_tree.skolemize()
+        clauses = skolem_tree.to_cnf_clauses()
+        return clauses
+    except Exception as e:
+        print(f"Ошибка при преобразовании формулы '{formula}' в клаузы: {str(e)}")
+        return []
+
+
+def simplify_clauses(clauses: List[Clause], max_iterations: int = 50) -> List[Clause]:
+    simplified = [c for c in clauses if not c.is_tautology()]
+    
+    changed = True
+    iteration = 0
+    
+    while changed and iteration < max_iterations:
+        iteration += 1
+        changed = False
+        
+        units = [c for c in simplified if len(c.literals) == 1]
+        new_simplified = []
+        
+        for clause in simplified:
+            if len(clause.literals) == 1:
+                new_simplified.append(clause)
                 continue
-            clause_list.append(res)
-            idx = len(clause_list)
-            log(f"Резолюция {i+1} & {j+1} → клауза {idx}")
-            log(f"  {list(clause_list[i])}")
-            log(f"  {list(clause_list[j])}")
-            log(f"  Литералы: {lit1} и {lit2}")
-            log(f"  Подстановка: {theta}")
-            log(f"  ➤ {list(res)}")
-            added_any = True
+                
+            for unit in units:
+                unit_lit = next(iter(unit.literals))
+                comp = unit_lit.negate()
+                
+                if any(lit.predicate == comp.predicate and 
+                       lit.negated == comp.negated and
+                       all(str(a1) == str(a2) for a1, a2 in zip(lit.args, comp.args))
+                       for lit in clause.literals):
+                    changed = True
+                    break
+                    
+                if any(lit.predicate == unit_lit.predicate and 
+                       lit.negated == unit_lit.negated and
+                       all(str(a1) == str(a2) for a1, a2 in zip(lit.args, unit_lit.args))
+                       for lit in clause.literals):
+                    new_lits = {lit for lit in clause.literals 
+                              if not (lit.predicate == unit_lit.predicate and 
+                                     lit.negated == unit_lit.negated and
+                                     all(str(a1) == str(a2) for a1, a2 in zip(lit.args, unit_lit.args)))}
+                    if not new_lits:
+                        return [Clause(set())]
+                    clause = Clause(new_lits)
+                    changed = True
+            
+            else:
+                new_simplified.append(clause)
+        
+        if changed:
+            simplified = new_simplified
+    
+    return simplified
 
-        if not added_any:
-            log("Нет новых клауз для добавления.")
-            break
 
-        step += 1
-        if step > 50:
-            log("Достигнут лимит шагов (50). Прекращаем.")
-            break
+def standardize_variables(clause: Clause, used_names: Optional[Set[str]] = None) -> Clause:
+    if used_names is None:
+        used_names = set()
+    
+    substitution = {}
+    counter = 0
+    
+    def fresh_var():
+        nonlocal counter
+        while True:
+            name = f"v{counter}"
+            counter += 1
+            if name not in used_names:
+                used_names.add(name)
+                return name
+    
+    new_literals = set()
+    for lit in clause.literals:
+        new_args = []
+        for arg in lit.args:
+            if isinstance(arg, Variable):
+                old_name = arg.name
+                if old_name not in substitution:
+                    substitution[old_name] = Variable(fresh_var())
+                new_args.append(substitution[old_name])
+            else:
+                new_args.append(arg)
+        new_lit = Literal(lit.predicate, new_args, lit.negated)
+        new_literals.add(new_lit)
+    
+    return Clause(new_literals)
 
-    log("\nДоказательство не удалось.")
-    return False, "\n".join(output_lines)
+
+def resolve(clauses: List[Clause], max_clauses: int = 1000, max_steps: int = 10000) -> Tuple[bool, List[Clause], List[Tuple[Clause, Clause, Clause, Dict[str, Term]]]]:
+    from collections import deque
+    
+    standardized = []
+    used_vars = set()
+    for clause in clauses:
+        if not clause.is_empty():
+            standardized.append(standardize_variables(clause, used_vars))
+        else:
+            return True, [clause], []
+    
+    clauses_set = set(standardized)
+    all_clauses = list(clauses_set)
+    history = []
+    
+    queue = deque()
+    for i in range(len(all_clauses)):
+        for j in range(i + 1, len(all_clauses)):
+            queue.append((all_clauses[i], all_clauses[j]))
+    
+    steps = 0
+    global_counter = 0
+    
+    while queue and steps < max_steps and len(all_clauses) < max_clauses:
+        steps += 1
+        c1, c2 = queue.popleft()
+        
+        c1_std = standardize_variables(c1, used_vars)
+        c2_std = standardize_variables(c2, used_vars)
+        
+        resolvents = c1_std.resolve_with(c2_std)
+        
+        for new_clause_raw, mgu in resolvents:
+            if new_clause_raw.is_empty():
+                history.append((c1, c2, new_clause_raw, mgu))
+                return True, all_clauses + [new_clause_raw], history
+            
+            new_clause = standardize_variables(new_clause_raw, used_vars)
+            
+            is_subsumed = False
+            for existing in all_clauses:
+                if new_clause.literals.issubset(existing.literals):
+                    is_subsumed = True
+                    break
+            if is_subsumed:
+                continue
+            
+            if any(set(new_clause.literals) == set(cl.literals) for cl in all_clauses):
+                continue
+                
+            clauses_set.add(new_clause)
+            all_clauses.append(new_clause)
+            history.append((c1, c2, new_clause, mgu))
+            
+            for existing in all_clauses[:-1]:
+                queue.append((existing, new_clause))
+                queue.append((new_clause, existing))
+    
+    return False, all_clauses, history
+
+
+def prove_theorem(statements: List[str], goal: str) -> Tuple[bool, List[Clause], List[Tuple[Clause, Clause, Clause, Dict[str, Term]]]]:
+    all_clauses = []
+    for stmt in statements:
+        clauses = convert_to_clauses(stmt)
+        all_clauses.extend(clauses)
+    
+    negated_goal = f"¬({goal})"
+    negated_clauses = convert_to_clauses(negated_goal)
+    all_clauses.extend(negated_clauses)
+    
+    return resolve(all_clauses, max_clauses=500, max_steps=500)
+
+
+def parse_statements_and_goal(data: Dict[str, Any]) -> Tuple[List[str], str]:
+    if 'statements' not in data or 'goal' not in data:
+        raise ValueError("JSON данные должны содержать поля 'statements' и 'goal'")
+    
+    statements = data['statements']
+    goal = data['goal']
+    
+    if not isinstance(statements, list) or not all(isinstance(s, str) for s in statements):
+        raise ValueError("Поле 'statements' должно быть списком строк")
+    
+    if not isinstance(goal, str):
+        raise ValueError("Поле 'goal' должно быть строкой")
+    
+    return statements, goal
+
+
+def resolution_proof(kb: Tuple[List[str], str], log_stream: Optional[io.StringIO] = None) -> Tuple[bool, str]:
+    if log_stream is None:
+        log_stream = io.StringIO()
+    
+    statements, goal = kb
+    
+    log_stream.write("ЛОГИЧЕСКОЕ ДОКАЗАТЕЛЬСТВО\n")
+    
+    log_stream.write("ИСХОДНЫЕ ДАННЫЕ\n")
+    log_stream.write(f"Утверждений: {len(statements)}\n")
+    for i, stmt in enumerate(statements, 1):
+        log_stream.write(f"  {i}. {stmt}\n")
+    log_stream.write(f"Цель: {goal}\n\n")
+    
+    log_stream.write("ПРЕОБРАЗОВАНИЯ\n")
+    
+    all_clauses = []
+    for i, stmt in enumerate(statements, 1):
+        log_stream.write(f"\nУтверждение {i}: {stmt}\n")
+        try:
+            pnf = convert_formula_to_pnf(stmt)
+            log_stream.write(f"ПНФ: {pnf}\n")
+            
+            skolem = convert_formula_to_skolem(stmt)
+            log_stream.write(f"Сколемизация: {skolem}\n")
+            
+            clauses = convert_to_clauses(stmt)
+            log_stream.write(f"Клаузы ({len(clauses)}):\n")
+            for j, clause in enumerate(clauses, 1):
+                log_stream.write(f"{j}. {clause}\n")
+            
+            all_clauses.extend(clauses)
+        except Exception as e:
+            log_stream.write(f"ОШИБКА: {str(e)}\n")
+    
+    log_stream.write(f"\nОтрицание цели: ¬({goal})\n")
+    try:
+        negated_goal = f"¬({goal})"
+        pnf_goal = convert_formula_to_pnf(negated_goal)
+        log_stream.write(f"ПНФ отрицания цели: {pnf_goal}\n")
+        
+        skolem_goal = convert_formula_to_skolem(negated_goal)
+        log_stream.write(f"Сколемизация отрицания цели: {skolem_goal}\n")
+        
+        negated_clauses = convert_to_clauses(negated_goal)
+        log_stream.write(f"Клаузы из отрицания цели ({len(negated_clauses)}):\n")
+        for j, clause in enumerate(negated_clauses, 1):
+            log_stream.write(f"      {j}. {clause}\n")
+        
+        all_clauses.extend(negated_clauses)
+    except Exception as e:
+        log_stream.write(f"ОШИБКА: {str(e)}\n")
+    
+    log_stream.write(f"\nСТАТИСТИКА ДО УПРОЩЕНИЯ\n")
+    log_stream.write(f"Всего клауз: {len(all_clauses)}\n")
+    for i, clause in enumerate(all_clauses, 1):
+        log_stream.write(f"  {i}. {clause}\n")
+    
+    log_stream.write(f"\nУПРОЩЕНИЕ КЛАУЗ\n")
+    try:
+        simplified_clauses = simplify_clauses(all_clauses)
+        log_stream.write(f"Клауз после упрощения: {len(simplified_clauses)}\n")
+        for i, clause in enumerate(simplified_clauses, 1):
+            log_stream.write(f"{i}. {clause}\n")
+    except Exception as e:
+        log_stream.write(f"ОШИБКА при упрощении: {str(e)}\n")
+        simplified_clauses = all_clauses
+    
+    log_stream.write(f"\nМЕТОД РЕЗОЛЮЦИЙ\n")
+    try:
+        success, final_clauses, history = resolve(simplified_clauses, max_clauses=500, max_steps=500)
+        
+        log_stream.write(f"\nРЕЗУЛЬТАТ: {'ДОКАЗАНО' if success else 'НЕ ДОКАЗАНО'}\n")
+        log_stream.write(f"Статистика:\n")
+        log_stream.write(f"Всего клауз: {len(final_clauses)}\n")
+        log_stream.write(f"Шагов резолюции: {len(history)}\n")
+        
+        if history:
+            log_stream.write(f"\nДЕТАЛЬНАЯ ИСТОРИЯ РЕЗОЛЮЦИЙ\n")
+            for i, (parent1, parent2, resolvent, substitution) in enumerate(history, 1):
+                log_stream.write(f"\nШАГ {i}\n")
+                log_stream.write(f"Родитель 1: {parent1}\n")
+                log_stream.write(f"Родитель 2: {parent2}\n")
+                log_stream.write(f"Результат: {resolvent}\n")
+                
+                if substitution:
+                    subst_items = [f"{var} = {term.get_name()}" for var, term in substitution.items()]
+                    subst_str = ", ".join(subst_items)
+                    log_stream.write(f"Подстановка: {subst_str}\n")
+                else:
+                    log_stream.write(f"Подстановка: (пустая)\n")
+                
+                if resolvent.is_empty():
+                    log_stream.write(f"ОБНАРУЖЕНО ПРОТИВОРЕЧИЕ!\n")
+                    break
+        
+        if not success:
+            log_stream.write(f"\nКОНЕЧНЫЕ КЛАУЗЫ\n")
+            for i, clause in enumerate(final_clauses[:15], 1):
+                log_stream.write(f"  {i}. {clause}\n")
+            if len(final_clauses) > 15:
+                log_stream.write(f"  ... и еще {len(final_clauses) - 15} клауз\n")
+    
+    except Exception as e:
+        log_stream.write(f"\nКРИТИЧЕСКАЯ ОШИБКА в методе резолюций:\n{str(e)}\n")
+        success = False
+    
+    log_stream.write("КОНЕЦ ДОКАЗАТЕЛЬСТВА\n")
+    
+    return success, log_stream.getvalue()
+
 
 def solve_logic_task(data: dict) -> str:
     try:
-        kb = parse_statements_and_goal(data)
+        statements, goal = parse_statements_and_goal(data)
         
-        success, log = resolution_proof(kb)
-        result = "Доказательство успешно!" if success else "Доказательство не удалось."
+        success, log = resolution_proof((statements, goal))
         
-        return str(data) + log + "\n" + result
+        result = {
+            "success": 1 if success else 0,
+            "log": log
+        }
+        
+        return json.dumps(result, ensure_ascii=False, indent=2, separators=(',', ': '))
+    
     except Exception as e:
-        return f"Ошибка при решении задачи:\n{str(e)}"
+        error_log = io.StringIO()
+        error_log.write("ОШИБКА ВЫПОЛНЕНИЯ\n")
+        error_log.write(f"Тип ошибки: {type(e).__name__}\n")
+        error_log.write(f"Сообщение: {str(e)}\n\n")
+        error_log.write("Контекст:\n")
+        error_log.write(f"Данные: {json.dumps(data, ensure_ascii=False, indent=2)}\n")
+        
+        import traceback
+        error_log.write(traceback.format_exc())
+        
+        error_result = {
+            "success": 0,
+            "log": error_log.getvalue()
+        }
+        
+        return json.dumps(error_result, ensure_ascii=False, indent=2, separators=(',', ': '))
+
+
+def main():
+    data = {'statements': ['∀(x, ∀(y, depends_on(x, y) → ¬depends_on(y, x)))', 'depends_on(Petya, Vasya)'], 'goal': '¬depends_on(Vasya, Petya)'}
+    
+    result = solve_logic_task(data)
+    result = json.loads(result)
+    print(result['log'])
+
 
 if __name__ == "__main__":
-
-    data = {
-        "statements": [
-            "some(p, patient(p) ∧ all(d, doctor(d) → loves(p, d)))",
-            "all(p, z, (patient(p) ∧ healer(z)) → ¬loves(p, z))"
-        ],
-        "goal": "all(d, z, (doctor(d) ∧ healer(z)) → d ≠ z)"
-    }
-
-    kb = parse_statements_and_goal(data)
-    print("Сгенерированные клаузы:")
-    for c in kb:
-        print(c)
-
-    success = resolution_proof(kb)
-    print("Доказательство успешно!" if success else "Доказательство не удалось.")
+    main()
