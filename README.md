@@ -7,7 +7,7 @@
 ```python
 python3 -m venv env
 source env/bin/activate
-pip install -r requerements.txt
+pip install -r requirements.txt
 ```
 <br>
 
@@ -56,5 +56,6 @@ pyinstaller ChatApp_windows.spec
 
 <br><br>
 
-## [Ready-made application](https://github.com/GeorgiiPoliakov1/MathLogicChat/releases/tag/v.1.0.0)
+## [Ready-made application](https://github.com/Piankov-Michail/MathLogicChat/releases/tag/v1.0.0)
+
 
