@@ -1189,9 +1189,9 @@ def convert_formula_to_skolem(formula: str) -> str:
 def convert_to_clauses(formula: str) -> List[Clause]:
     try:
         tree = Parser.parse(formula)
-        transformed_tree = tree.apply_transformations()  # До cnf, но apply_transformations теперь без финального cnf
+        transformed_tree = tree.apply_transformations()
         skolem_tree = transformed_tree.skolemize()
-        cnf_tree = skolem_tree.convert_to_cnf()  # Добавлено: преобразование в CNF после сколемизации
+        cnf_tree = skolem_tree.convert_to_cnf()
         clauses = cnf_tree.to_cnf_clauses()
         return clauses
     except Exception as e:
@@ -1210,9 +1210,8 @@ def simplify_clauses(clauses: List[Clause], max_iterations: int = 50) -> List[Cl
         changed = False
         
         units = [c for c in simplified if len(c.literals) == 1]
-        new_simplified = units.copy()  # Сохраняем units
+        new_simplified = units.copy()
         
-        # Проверка на противоречие среди units
         for i in range(len(units)):
             unit_lit1 = next(iter(units[i].literals))
             for j in range(i+1, len(units)):
@@ -1229,18 +1228,16 @@ def simplify_clauses(clauses: List[Clause], max_iterations: int = 50) -> List[Cl
             for unit in units:
                 unit_lit = next(iter(unit.literals))
                 
-                # Проверяем на наличие комплементарного литерала
                 complementary_lits = [lit for lit in new_literals if unit_lit.is_complementary(lit)]
                 for comp_lit in complementary_lits:
                     mgu = unit_lit.most_general_unifier(comp_lit)
                     if mgu is not None:
-                        # Применяем MGU ко всей клаузе
                         new_literals = {l.substitute(mgu) for l in new_literals if not l.substitute(mgu).is_complementary(unit_lit.substitute(mgu))}
                         clause_changed = True
                         changed = True
                         if not new_literals:
                             return [Clause(set())]
-                        break  # После одной подстановки переходим к следующему unit
+                        break
                 
                 if clause_changed:
                     break
