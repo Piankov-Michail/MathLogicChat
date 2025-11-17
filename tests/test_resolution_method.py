@@ -133,9 +133,9 @@ def test_student_passed_some_exam():
     # То что надо доказать: Для любого студента существует экзамен, который он сдал
     data = {
         "statements": [
-            "all(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
+            "∀(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
         ],
-        "goal": "all(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
+        "goal": "∀(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
     }
 
     kb = parse_statements_and_goal(data)
@@ -151,7 +151,7 @@ def test_cold_coat():
     # Нужно доказать: Человек носит пальто
     data = {
         "statements": [
-            "all(x, (cold(x) ∨ snow(x)) → wears_coat(x))",
+            "∀(x, (cold(x) ∨ snow(x)) → wears_coat(x))",
             "cold(today)"
         ],
         "goal": "wears_coat(today)"
@@ -168,7 +168,7 @@ def test_cats_mice():
     # Нужно доказать: Джерри не боится Тома
     data = {
         "statements": [
-            "all(c, m, (cat(c) ∧ mouse(m)) → ¬afraid(m, c))",
+            "∀(c, m, (cat(c) ∧ mouse(m)) → ¬afraid(m, c))",
             "cat(tom)",
             "mouse(jerry)"
         ],
@@ -186,7 +186,7 @@ def test_sport_health():
     # Нужно доказать: Эмма здорова
     data = {
         "statements": [
-            "all(p, (trains(p) ∧ eats_healthy(p)) → healthy(p))",
+            "∀(p, (trains(p) ∧ eats_healthy(p)) → healthy(p))",
             "trains(emma)",
             "eats_healthy(emma)"
         ],
@@ -204,7 +204,7 @@ def test_reading_knowledge():
     # Нужно доказать: Алекс получил знание
     data = {
         "statements": [
-            "all(p, b, (reads(p, b) ∧ interesting(b)) → knows(p, info))",
+            "∀(p, b, (reads(p, b) ∧ interesting(b)) → knows(p, info))",
             "reads(alex, physics_book)",
             "interesting(physics_book)"
         ],
@@ -220,9 +220,9 @@ def test_some_birds_cannot_fly():
     # Ожидаемый вывод: ∃x (Птица(x) ∧ ¬Летает(x))
     data = {
         "statements": [
-            "some(x, bird(x) ∧ ¬flies(x))"
+            "∃(x, bird(x) ∧ ¬flies(x))"
         ],
-        "goal": "some(x, bird(x) ∧ ¬flies(x))"
+        "goal": "∃(x, bird(x) ∧ ¬flies(x))"
     }
 
     kb = parse_statements_and_goal(data)
@@ -236,7 +236,7 @@ def test_pet_care():
     # Нужно доказать: Фидо счастлив
     data = {
         "statements": [
-            "some(d, dog(d) ∧ all(o, owner(o) → cares(o, d)))",
+            "∃(d, dog(d) ∧ ∀(o, owner(o) → cares(o, d)))",
             "dog(fido)"
         ],
         "goal": "happy(fido)"
@@ -252,7 +252,7 @@ def test_plants_bloom():
     # Нужно доказать: Роза цветёт
     data = {
         "statements": [
-            "some(p, plant(p) ∧ (watered(p) ∨ sunny(p)))",
+            "∃(p, plant(p) ∧ (watered(p) ∨ sunny(p)))",
             "sunny(rose)"
         ],
         "goal": "blooms(rose)"
@@ -271,8 +271,8 @@ def test_student_sad_and_not_happy():
     # Утверждение: ¬Веселый(Петя)
     data = {
         "statements": [
-            "all(x, (student(x) ∧ ¬passed(x, math)) → sad(x))",
-            "all(x, sad(x) → ¬happy(x))",
+            "∀(x, (student(x) ∧ ¬passed(x, math)) → sad(x))",
+            "∀(x, sad(x) → ¬happy(x))",
             "student(petya)",
             "¬passed(petya, math)"
         ],
@@ -291,7 +291,7 @@ def test_tasks_approval():
     # Нужно доказать: Проект продвигается
     data = {
         "statements": [
-            "some(t, task(t) ∧ all(m, manager(m) → approved_by(t, m)))",
+            "some(t, task(t) ∧ ∀(m, manager(m) → approved_by(t, m)))",
             "done(task1)",
             "manager(manager1)"
         ],
@@ -308,7 +308,7 @@ def test_cat_gray_trap():
     # Объяснение: "Нет информации о том, живет ли Мурка в доме"
     data = {
         "statements": [
-            "all(x, (cat(x) ∧ lives_in_this_house(x)) → gray(x))"
+            "∀(x, (cat(x) ∧ lives_in_this_house(x)) → gray(x))"
         ],
         "goal": "gray(murka)"
     }
@@ -325,7 +325,7 @@ def test_studies_exam():
     # Нужно доказать: Алекс сдал экзамен
     data = {
         "statements": [
-            "all(s, (studies(s) ∧ ¬lazy(s)) → passes_exam(s))",
+            "∀(s, (studies(s) ∧ ¬lazy(s)) → passes_exam(s))",
             "studies(alex)",
             "¬lazy(alex)"
         ],
