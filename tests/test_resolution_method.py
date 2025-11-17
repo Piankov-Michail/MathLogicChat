@@ -51,7 +51,7 @@ def test_no_doctor_is_healer():
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
 
-    assert success is True, "Должны доказать, что врач ≠ целитель"
+    assert success is True, "Должны доказать, что врач не может быть целителем"
 
 def test_vaccination():
     """Тест: Доказательство отсутствия заболеваний"""
