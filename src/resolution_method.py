@@ -26,8 +26,7 @@ class Node:
         result = result.move_negation_inward()
         # Шаг 7: Вынести кванторы влево
         result = result.pull_quantifiers_left()
-        # Шаг 8: Преобразовать к КНФ
-        result = result.convert_to_cnf()
+        # Убрано: convert_to_cnf перемещено после сколемизации
         return result
     
     def eliminate_equivalence(self) -> 'Node':
@@ -919,7 +918,7 @@ class ExistsNode(Node):
         skolem_id = skolem_counter['count']
         
         if not universal_vars:
-            skolem_constant = ConstantNode(f"c{skolem_id}")
+            skolem_constant = ConstantNode(f"C{skolem_id}")  # Изменено на "C" (заглавная)
             replaced_body = self._replace_variable(self.body, self.var_name, skolem_constant)
         else:
             universal_var_nodes = [VariableNode(var) for var in universal_vars]
@@ -1160,10 +1159,10 @@ class Parser:
             
             return PredicateNode(pred_name, args)
         
-        if formula.startswith('c') and formula[1:].isdigit():
+        if len(formula) == 1 and formula.islower() and formula.isalpha():
+            return VariableNode(formula)
+        else:
             return ConstantNode(formula)
-        
-        return VariableNode(formula)
 
 
 def convert_formula_to_pnf(formula: str) -> str:
@@ -1179,8 +1178,8 @@ def convert_formula_to_pnf(formula: str) -> str:
 def convert_formula_to_skolem(formula: str) -> str:
     try:
         tree = Parser.parse(formula)
-        pnf_tree = tree.apply_transformations()
-        skolem_tree = pnf_tree.skolemize()
+        transformed_tree = tree.apply_transformations()
+        skolem_tree = transformed_tree.skolemize()
         return str(skolem_tree)
     except Exception as e:
         print(f"Ошибка при сколемизации формулы '{formula}': {str(e)}")
@@ -1190,9 +1189,10 @@ def convert_formula_to_skolem(formula: str) -> str:
 def convert_to_clauses(formula: str) -> List[Clause]:
     try:
         tree = Parser.parse(formula)
-        pnf_tree = tree.apply_transformations()
-        skolem_tree = pnf_tree.skolemize()
-        clauses = skolem_tree.to_cnf_clauses()
+        transformed_tree = tree.apply_transformations()  # До cnf, но apply_transformations теперь без финального cnf
+        skolem_tree = transformed_tree.skolemize()
+        cnf_tree = skolem_tree.convert_to_cnf()  # Добавлено: преобразование в CNF после сколемизации
+        clauses = cnf_tree.to_cnf_clauses()
         return clauses
     except Exception as e:
         print(f"Ошибка при преобразовании формулы '{formula}' в клаузы: {str(e)}")
@@ -1210,39 +1210,46 @@ def simplify_clauses(clauses: List[Clause], max_iterations: int = 50) -> List[Cl
         changed = False
         
         units = [c for c in simplified if len(c.literals) == 1]
-        new_simplified = []
+        new_simplified = units.copy()  # Сохраняем units
         
-        for clause in simplified:
-            if len(clause.literals) == 1:
-                new_simplified.append(clause)
-                continue
-                
+        # Проверка на противоречие среди units
+        for i in range(len(units)):
+            unit_lit1 = next(iter(units[i].literals))
+            for j in range(i+1, len(units)):
+                unit_lit2 = next(iter(units[j].literals))
+                if unit_lit1.is_complementary(unit_lit2):
+                    mgu = unit_lit1.most_general_unifier(unit_lit2.negate())
+                    if mgu is not None:
+                        return [Clause(set())]
+        
+        for clause in [c for c in simplified if len(c.literals) > 1]:
+            new_literals = clause.literals.copy()
+            clause_changed = False
+            
             for unit in units:
                 unit_lit = next(iter(unit.literals))
-                comp = unit_lit.negate()
                 
-                if any(lit.predicate == comp.predicate and 
-                       lit.negated == comp.negated and
-                       all(str(a1) == str(a2) for a1, a2 in zip(lit.args, comp.args))
-                       for lit in clause.literals):
-                    changed = True
+                # Проверяем на наличие комплементарного литерала
+                complementary_lits = [lit for lit in new_literals if unit_lit.is_complementary(lit)]
+                for comp_lit in complementary_lits:
+                    mgu = unit_lit.most_general_unifier(comp_lit)
+                    if mgu is not None:
+                        # Применяем MGU ко всей клаузе
+                        new_literals = {l.substitute(mgu) for l in new_literals if not l.substitute(mgu).is_complementary(unit_lit.substitute(mgu))}
+                        clause_changed = True
+                        changed = True
+                        if not new_literals:
+                            return [Clause(set())]
+                        break  # После одной подстановки переходим к следующему unit
+                
+                if clause_changed:
                     break
-                    
-                if any(lit.predicate == unit_lit.predicate and 
-                       lit.negated == unit_lit.negated and
-                       all(str(a1) == str(a2) for a1, a2 in zip(lit.args, unit_lit.args))
-                       for lit in clause.literals):
-                    new_lits = {lit for lit in clause.literals 
-                              if not (lit.predicate == unit_lit.predicate and 
-                                     lit.negated == unit_lit.negated and
-                                     all(str(a1) == str(a2) for a1, a2 in zip(lit.args, unit_lit.args)))}
-                    if not new_lits:
-                        return [Clause(set())]
-                    clause = Clause(new_lits)
-                    changed = True
             
-            else:
-                new_simplified.append(clause)
+            if new_literals and len(new_literals) == 1:
+                units.append(Clause(new_literals))
+            
+            if new_literals:
+                new_simplified.append(Clause(new_literals))
         
         if changed:
             simplified = new_simplified
@@ -1283,78 +1290,67 @@ def standardize_variables(clause: Clause, used_names: Optional[Set[str]] = None)
     return Clause(new_literals)
 
 
-def resolve(clauses: List[Clause], max_clauses: int = 1000, max_steps: int = 10000) -> Tuple[bool, List[Clause], List[Tuple[Clause, Clause, Clause, Dict[str, Term]]]]:
-    from collections import deque
-    
-    standardized = []
+def resolve(kb_clauses: List[Clause], sos_clauses: List[Clause], max_clauses: int = 1000, max_steps: int = 10000) -> Tuple[bool, List[Clause], List[Tuple[Clause, Clause, Clause, Dict[str, Term]]]]:
+    standardized_kb = []
+    standardized_sos = []
     used_vars = set()
-    for clause in clauses:
-        if not clause.is_empty():
-            standardized.append(standardize_variables(clause, used_vars))
-        else:
-            return True, [clause], []
     
-    clauses_set = set(standardized)
-    all_clauses = list(clauses_set)
+    for clause in kb_clauses:
+        if not clause.is_empty():
+            standardized_kb.append(standardize_variables(clause, used_vars))
+    
+    for clause in sos_clauses:
+        if not clause.is_empty():
+            standardized_sos.append(standardize_variables(clause, used_vars))
+    
+    kb_set = set(standardized_kb)
+    sos_set = set(standardized_sos)
+    all_clauses = list(kb_set.union(sos_set))
     history = []
     
-    queue = deque()
-    for i in range(len(all_clauses)):
-        for j in range(i + 1, len(all_clauses)):
-            queue.append((all_clauses[i], all_clauses[j]))
-    
     steps = 0
-    global_counter = 0
     
-    while queue and steps < max_steps and len(all_clauses) < max_clauses:
-        steps += 1
-        c1, c2 = queue.popleft()
+    while sos_set and steps < max_steps and len(all_clauses) < max_clauses:
+        new_sos = []
         
-        c1_std = standardize_variables(c1, used_vars)
-        c2_std = standardize_variables(c2, used_vars)
-        
-        resolvents = c1_std.resolve_with(c2_std)
-        
-        for new_clause_raw, mgu in resolvents:
-            if new_clause_raw.is_empty():
-                history.append((c1, c2, new_clause_raw, mgu))
-                return True, all_clauses + [new_clause_raw], history
-            
-            new_clause = standardize_variables(new_clause_raw, used_vars)
-            
-            is_subsumed = False
-            for existing in all_clauses:
-                if new_clause.literals.issubset(existing.literals):
-                    is_subsumed = True
-                    break
-            if is_subsumed:
-                continue
-            
-            if any(set(new_clause.literals) == set(cl.literals) for cl in all_clauses):
-                continue
+        for sos_clause in list(sos_set):
+            for kb_clause in list(kb_set.union(sos_set)):
+                steps += 1
                 
-            clauses_set.add(new_clause)
-            all_clauses.append(new_clause)
-            history.append((c1, c2, new_clause, mgu))
-            
-            for existing in all_clauses[:-1]:
-                queue.append((existing, new_clause))
-                queue.append((new_clause, existing))
+                c1_std = standardize_variables(sos_clause, used_vars.copy())
+                c2_std = standardize_variables(kb_clause, used_vars.copy())
+                
+                resolvents = c1_std.resolve_with(c2_std)
+                
+                for new_clause_raw, mgu in resolvents:
+                    if new_clause_raw.is_empty():
+                        history.append((sos_clause, kb_clause, new_clause_raw, mgu))
+                        return True, all_clauses + [new_clause_raw], history
+                    
+                    new_clause = standardize_variables(new_clause_raw, used_vars)
+                    
+                    if new_clause.is_tautology() or any(new_clause.literals.issubset(existing.literals) for existing in all_clauses):
+                        continue
+                    
+                    if new_clause not in all_clauses:
+                        new_sos.append(new_clause)
+                        history.append((sos_clause, kb_clause, new_clause, mgu))
+                        all_clauses.append(new_clause)
+        
+        sos_set.update(new_sos)
     
     return False, all_clauses, history
 
 
 def prove_theorem(statements: List[str], goal: str) -> Tuple[bool, List[Clause], List[Tuple[Clause, Clause, Clause, Dict[str, Term]]]]:
-    all_clauses = []
+    kb_clauses = []
     for stmt in statements:
-        clauses = convert_to_clauses(stmt)
-        all_clauses.extend(clauses)
+        kb_clauses.extend(convert_to_clauses(stmt))
     
     negated_goal = f"¬({goal})"
-    negated_clauses = convert_to_clauses(negated_goal)
-    all_clauses.extend(negated_clauses)
+    sos_clauses = convert_to_clauses(negated_goal)
     
-    return resolve(all_clauses, max_clauses=500, max_steps=500)
+    return resolve(kb_clauses, sos_clauses, max_clauses=500, max_steps=500)
 
 
 def parse_statements_and_goal(data: Dict[str, Any]) -> Tuple[List[str], str]:
@@ -1389,7 +1385,7 @@ def resolution_proof(kb: Tuple[List[str], str], log_stream: Optional[io.StringIO
     
     log_stream.write("ПРЕОБРАЗОВАНИЯ\n")
     
-    all_clauses = []
+    kb_clauses = []
     for i, stmt in enumerate(statements, 1):
         log_stream.write(f"\nУтверждение {i}: {stmt}\n")
         try:
@@ -1404,11 +1400,12 @@ def resolution_proof(kb: Tuple[List[str], str], log_stream: Optional[io.StringIO
             for j, clause in enumerate(clauses, 1):
                 log_stream.write(f"{j}. {clause}\n")
             
-            all_clauses.extend(clauses)
+            kb_clauses.extend(clauses)
         except Exception as e:
             log_stream.write(f"ОШИБКА: {str(e)}\n")
     
     log_stream.write(f"\nОтрицание цели: ¬({goal})\n")
+    negated_clauses = []
     try:
         negated_goal = f"¬({goal})"
         pnf_goal = convert_formula_to_pnf(negated_goal)
@@ -1422,9 +1419,10 @@ def resolution_proof(kb: Tuple[List[str], str], log_stream: Optional[io.StringIO
         for j, clause in enumerate(negated_clauses, 1):
             log_stream.write(f"      {j}. {clause}\n")
         
-        all_clauses.extend(negated_clauses)
     except Exception as e:
         log_stream.write(f"ОШИБКА: {str(e)}\n")
+    
+    all_clauses = kb_clauses + negated_clauses
     
     log_stream.write(f"\nСТАТИСТИКА ДО УПРОЩЕНИЯ\n")
     log_stream.write(f"Всего клауз: {len(all_clauses)}\n")
@@ -1433,17 +1431,20 @@ def resolution_proof(kb: Tuple[List[str], str], log_stream: Optional[io.StringIO
     
     log_stream.write(f"\nУПРОЩЕНИЕ КЛАУЗ\n")
     try:
-        simplified_clauses = simplify_clauses(all_clauses)
+        simplified_kb = simplify_clauses(kb_clauses)
+        simplified_sos = simplify_clauses(negated_clauses)
+        simplified_clauses = simplified_kb + simplified_sos
         log_stream.write(f"Клауз после упрощения: {len(simplified_clauses)}\n")
         for i, clause in enumerate(simplified_clauses, 1):
             log_stream.write(f"{i}. {clause}\n")
     except Exception as e:
         log_stream.write(f"ОШИБКА при упрощении: {str(e)}\n")
-        simplified_clauses = all_clauses
+        simplified_kb = kb_clauses
+        simplified_sos = negated_clauses
     
     log_stream.write(f"\nМЕТОД РЕЗОЛЮЦИЙ\n")
     try:
-        success, final_clauses, history = resolve(simplified_clauses, max_clauses=500, max_steps=500)
+        success, final_clauses, history = resolve(simplified_kb, simplified_sos, max_clauses=500, max_steps=500)
         
         log_stream.write(f"\nРЕЗУЛЬТАТ: {'ДОКАЗАНО' if success else 'НЕ ДОКАЗАНО'}\n")
         log_stream.write(f"Статистика:\n")
