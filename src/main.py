@@ -365,8 +365,16 @@ class ChatApp(App):
         
         try:
             data = json.loads(clean_json_str)
-            print(data)
-            full_report = solve_logic_task(data)
+            #print(data)
+            resolution_result = solve_logic_task(data)
+        
+            if isinstance(resolution_result, str):
+                resolution_data = json.loads(resolution_result)
+            else:
+                resolution_data = resolution_result
+                
+            full_report = resolution_data.get('log', '')
+            print(full_report)
             
             explanation_prompt = (
                 "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
