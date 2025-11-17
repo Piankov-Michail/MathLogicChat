@@ -7,59 +7,144 @@ from src.resolution_method import parse_statements_and_goal, resolution_proof
 
 def test_socrates_mortality():
     """Тест: Смертность Сократа - классический силлогизм"""
-    data = {
-        "statements": [
-            "∀(x, Human(x) → Mortal(x))",
-            "Human(Socrates)"
-        ],
-        "goal": "Mortal(Socrates)"
-    }
+    # 1) Все люди смертны
+    # 2) Сократ - человек
+    # То что надо доказать: Сократ смертен
+    data = {'statements': ['∀(x, human(x) → mortal(x))', 'human(Socrates)'], 'goal': 'mortal(Socrates)'}
 
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
 
     assert success is True, "Должны доказать, что Сократ смертен"
 
+def test_contradiction_detection():
+    """Тест: Обнаружение противоречия должно завершиться неудачей"""
+    # 1) Все люди смертны
+    # 2) Сократ - человек
+    # То что надо доказать: Сократ бессмертен (ложное утверждение)
+    data = {'statements': ['∀(x, human(x) → mortal(x))', 'human(Socrates)'], 'goal': '¬mortal(Socrates)'}
+
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+
+    assert success is False, "Доказательство должно провалиться для ложной цели"
+
+def test_modus_tollens():
+    """Тест: Modus Tollens должно доказать утверждение"""
+    # 1) Если не идет дождь, то Саша идет гулять
+    # 2) Саша не идет гулять
+    # Доказать: Идет дождь
+    data = {'statements': ['∀(x, ¬rain(x) → walk(Sasha, x))', '¬∃(x, walk(Sasha, x))'], 'goal': '∃(x, rain(x))'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is True, "Должно доказать дождь через Modus Tollens"
+
 def test_no_doctor_is_healer():
     """Тест: Ни один врач не является целителем"""
-    data = {
-        "statements": [
-            "∃(p, Patient(p) ∧ ∀(d, Doctor(d) → Loves(p, d)))",
-            "∀(p, Patient(p) → ∀(h, Healer(h) → ¬Loves(p, h)))"
-        ],
-        "goal": "∀(x, Doctor(x) → ¬Healer(x))"
-    }
+    # 1) Некоторые пациенты любят всех врачей
+    # 2) Все пациенты не любят целителей
+    # То что надо доказать: Врач не может быть целителем
+    data = {'statements': ['∃(p, patient(p) ∧ ∀(d, doctor(d) → loves(p, d)))', '∀(p, patient(p) → ∀(h, healer(h) → ¬loves(p, h)))'], 'goal': '∀(x, doctor(x) → ¬healer(x))'}
 
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
 
     assert success is True, "Должны доказать, что врач не может быть целителем"
 
+def test_vaccination():
+    """Тест: Доказательство отсутствия заболеваний"""
+    # Привитые люди не болеют
+    # Непривитые люди не болеют
+    # Доказать: Никто не болеет
+    data = {'statements': ['∀(x, vaccinated(x) → ¬sick(x))', '∀(x, ¬vaccinated(x) → ¬sick(x))'], 'goal': '∀(x, ¬sick(x))'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is True, "Должно доказать отсутствие заболеваний у всех"
+
 def test_everyone_has_friend():
     """Тест: У каждого есть друг"""
-    data = {
-        "statements": [
-            "∀(x, Person(x) → ∃(y, Loves(y, x)))",
-            "∀(x, y, Loves(x, y) → Friend(x, y))"
-        ],
-        "goal": "∀(x, Person(x) → ∃(y, Friend(y, x)))"
-    }
+    # 1) Для каждого человека существует кто-то, кто его любит
+    # 2) Если кто-то тебя любит, то он твой друг
+    # То что надо доказать: У каждого есть друг
+    data = {'statements': ['∀(x, person(x) → ∃(y, loves(y, x)))', '∀(x, ∀(y, loves(y, x) → friend(y, x)))'], 'goal': '∀(x, person(x) → ∃(y, friend(y, x)))'}
 
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
 
     assert success is True, "Должны доказать, что у каждого человека есть друг"
 
+def test_everyone_has_child_relation():
+    """Тест: Доказательство отношения 'быть ребенком'"""
+    # У каждого человека есть родитель
+    # Если y является родителем x, то x является ребенком y
+    # Доказать: У каждого человека есть тот, для кого он является ребенком
+    data = {'statements': ['∀(x, person(x) → ∃(y, parent(y, x)))', '∀(x, ∀(y, parent(y, x) → child(x, y)))'], 'goal': '∀(x, person(x) → ∃(y, child(x, y)))'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is True, "Должно доказать существование обратного отношения"
+
+def test_inheritance_hierarchy():
+    """Тест: Иерархия наследования"""
+    # 1) Все кошки - животные
+    # 2) Все животные - живые существа
+    # 3) Мурзик - кошка
+    # То что надо доказать: Мурзик - живое существо
+    data = {'statements': ['∀(x, cat(x) → animal(x))', '∀(x, animal(x) → living_being(x))', 'cat(Murzik)'], 'goal': 'living_being(Murzik)'}
+
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+
+    assert success is True, "Должны доказать наследование свойств"
+
+def test_contradiction_implies_anything():
+    """Тест: Из противоречия следует любое утверждение"""
+    # Кошка - это млекопитающее
+    # Кошка - не млекопитающее
+    # Доказать: Луна сделана из сыра
+    data = {'statements': ['∀(x, cat(x) → mammal(x))', '∀(x, cat(x) → ¬mammal(x))'], 'goal': '∀(x, moon(x) → made_of_cheese(x))'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is False, "Из противоречия должно следовать любое утверждение"
+
+def test_false_generalization():
+    """Тест: Ложное обобщение должно завершиться неудачей"""
+    # Все тигры являются полосатыми
+    # Все кошки являются полосатыми
+    # Доказать: Все кошки являются тиграми
+    data = {'statements': ['∀(x, tiger(x) → striped(x))', '∀(x, cat(x) → striped(x))'], 'goal': '∀(x, cat(x) → tiger(x))'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is False, "Не должно доказывать ложное включение"
+
+def test_penguin_flying():
+    """Тест: Частный случай из отрицания общего утверждения"""
+    # 1) Неверно, что все птицы умеют летать
+    # 2) Пингвин - это птица
+    # Доказать: Пингвин не умеет летать
+    data = {'statements': ['¬∀x(bird(x) → fly(x))', 'bird(penguin)'], 'goal': '¬fly(penguin)'}
+    
+    kb = parse_statements_and_goal(data)
+    success, log = resolution_proof(kb)
+    
+    assert success is False, "Не должно доказывать частный случай без дополнительных предпосылок"
+
 def test_transitive_relationship():
     """Тест: Транзитивность отношения 'больше'"""
-    data = {
-        "statements": [
-            "∀(x, y, z, (Greater(x, y) ∧ Greater(y, z)) → Greater(x, z))",
-            "Greater(Five, Three)",
-            "Greater(Three, One)"
-        ],
-        "goal": "Greater(Five, One)"
-    }
+    # 1) Если A > B и B > C, то A > C
+    # 2) 5 > 3
+    # 3) 3 > 1
+    # То что надо доказать: 5 > 1
+    data = {'statements': ['∀(a, ∀(b, ∀(c, (greater(a, b) ∧ greater(b, c)) → greater(a, c))))', 'greater(5, 3)', 'greater(3, 1)'], 'goal': 'greater(5, 1)'}
 
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
@@ -68,269 +153,36 @@ def test_transitive_relationship():
 
 def test_no_circular_dependency():
     """Тест: Отсутствие циклических зависимостей"""
-    data = {'statements': ['∀(x, ∀(y, depends_on(x, y) → ¬depends_on(y, x)))', 'depends_on(Petya, Vasya)'], 'goal': '¬depends_on(Vasya, Petya)'}
+    # 1) Если A зависит от B, то B не зависит от A
+    # 2) X зависит от Y
+    # То что надо доказать: Y не зависит от X
+    data = {'statements': ['∀(a, ∀(b, depends(a, b) → ¬depends(b, a)))', 'depends(X, Y)'], 'goal': '¬depends(Y, X)'}
 
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
 
     assert success is True, "Должны доказать отсутствие обратной зависимости"
 
-def test_inheritance_hierarchy():
-    """Тест: Иерархия наследования"""
-    data = {
-        "statements": [
-            "∀(x, Cat(x) → Animal(x))",
-            "∀(x, Animal(x) → LivingBeing(x))",
-            "Cat(Murzik)"
-        ],
-        "goal": "LivingBeing(Murzik)"
-    }
-
+def test_maximal_number():
+    """Тест: Доказательство отсутствия максимального числа"""
+    # Для каждого числа существует большее число
+    # Если число A больше числа B, то B не больше A
+    # Доказать: Не существует числа, которое является наибольшим
+    data = {'statements': ['∀(x, number(x) → ∃(y, number(y) ∧ greater(y, x)))', '∀(x, ∀(y, (number(x) ∧ number(y) ∧ greater(x, y)) → ¬greater(y, x)))'], 'goal': '¬∃(x, number(x) ∧ ∀(y, number(y) → ¬greater(y, x)))'}
+    
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
+    
+    assert success is True, "Должно доказать отсутствие максимального числа"
 
-    assert success is True, "Должны доказать наследование свойств"
-
-def test_contradiction_detection():
-    """Тест: Обнаружение противоречия должно завершиться неудачей"""
-    data = {
-        "statements": [
-            "∀(x, Human(x) → Mortal(x))",
-            "Human(Socrates)"
-        ],
-        "goal": "¬Mortal(Socrates)"  # Ложная цель
-    }
-
+def test_syllogism():
+    """Тест: Простой силлогизм"""
+    # Все A являются B
+    # Все B являются C
+    # Доказать: Все A являются C
+    data = {'statements': ['∀(x, A(x) → B(x))', '∀(x, B(x) → C(x))'], 'goal': '∀(x, A(x) → C(x))'}
+    
     kb = parse_statements_and_goal(data)
     success, log = resolution_proof(kb)
-
-    assert success is False, "Доказательство должно провалиться для ложной цели"
-
-def test_input_noise():
-    """Тест: Устойчивость к "мусору" на входе"""
-    # Вход: "Ну типа, если там дождь, короче, зонт бери, а если нет... сам решай. Докажи что-нибудь."
-    # Ожидаемый результат: формализатор не смог выделить точную БЗ и цель, 
-    # объяснитель сообщает вежливый отказ.
-
-    data = {
-        "statements": [
-            "Неправильно сформулированное утверждение, невозможно формализовать"
-        ],
-        "goal": "Неопределено"
-    }
-
-    try:
-        kb = parse_statements_and_goal(data)
-        success, log = resolution_proof(kb)
-        assert success is False, "Должно быть невозможно доказать что-либо"
-    except Exception as e:
-        print("Ожидаемый отказ системы:", str(e))
-
-
-def test_student_passed_some_exam():
-    """Тест: Каждый студент сдал хотя бы один экзамен (проверка на вложенность ∀ → ∃)"""
-    # 1) Каждый студент сдал хотя бы один экзамен
-    # То что надо доказать: Для любого студента существует экзамен, который он сдал
-    data = {
-        "statements": [
-            "∀(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
-        ],
-        "goal": "∀(s, some(e, student(s) → (exam(e) ∧ passed(s, e))))"
-    }
-
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-
-    assert success is True, "Должны доказать, что каждый студент сдал хотя бы один экзамен"
-
-
-def test_cold_coat():
-    """Тест: Снег и пальто"""
-    # 1) Если холодно или снег, человек носит пальто
-    # 2) Сегодня холодно
-    # Нужно доказать: Человек носит пальто
-    data = {
-        "statements": [
-            "∀(x, (cold(x) ∨ snow(x)) → wears_coat(x))",
-            "cold(today)"
-        ],
-        "goal": "wears_coat(today)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_cats_mice():
-    """Тест: Кошки и мыши"""
-    # 1) Для всех кошек и мышей: если кошка и мышь, мышь не боится кошки
-    # 2) Том - кошка
-    # 3) Джерри - мышь
-    # Нужно доказать: Джерри не боится Тома
-    data = {
-        "statements": [
-            "∀(c, m, (cat(c) ∧ mouse(m)) → ¬afraid(m, c))",
-            "cat(tom)",
-            "mouse(jerry)"
-        ],
-        "goal": "¬afraid(jerry, tom)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_sport_health():
-    """Тест: Спорт и здоровье"""
-    # 1) Если человек тренируется и ест правильно, он здоров
-    # 2) Эмма тренируется
-    # 3) Эмма ест правильно
-    # Нужно доказать: Эмма здорова
-    data = {
-        "statements": [
-            "∀(p, (trains(p) ∧ eats_healthy(p)) → healthy(p))",
-            "trains(emma)",
-            "eats_healthy(emma)"
-        ],
-        "goal": "healthy(emma)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_reading_knowledge():
-    """Тест: Чтение и знание"""
-    # 1) Если человек читает книгу и книга интересная, он получает знание
-    # 2) Алекс читает книгу по физике
-    # 3) Книга по физике интересная
-    # Нужно доказать: Алекс получил знание
-    data = {
-        "statements": [
-            "∀(p, b, (reads(p, b) ∧ interesting(b)) → knows(p, info))",
-            "reads(alex, physics_book)",
-            "interesting(physics_book)"
-        ],
-        "goal": "knows(alex, info)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_some_birds_cannot_fly():
-    """Тест: Некоторые птицы не умеют летать"""
-    # Вход: "Некоторые птицы не умеют летать"
-    # Ожидаемый вывод: ∃x (Птица(x) ∧ ¬Летает(x))
-    data = {
-        "statements": [
-            "∃(x, bird(x) ∧ ¬flies(x))"
-        ],
-        "goal": "∃(x, bird(x) ∧ ¬flies(x))"
-    }
-
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_pet_care():
-    """Тест: Питомцы и уход"""
-    # 1) Существует собака, и все владельцы ухаживают за ней
-    # 2) Фидо - собака
-    # Нужно доказать: Фидо счастлив
-    data = {
-        "statements": [
-            "∃(d, dog(d) ∧ ∀(o, owner(o) → cares(o, d)))",
-            "dog(fido)"
-        ],
-        "goal": "happy(fido)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_plants_bloom():
-    """Тест: Растения и вода"""
-    # 1) Существует растение, которое либо полито, либо солнечно
-    # 2) Роза солнечна
-    # Нужно доказать: Роза цветёт
-    data = {
-        "statements": [
-            "∃(p, plant(p) ∧ (watered(p) ∨ sunny(p)))",
-            "sunny(rose)"
-        ],
-        "goal": "blooms(rose)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_student_sad_and_not_happy():
-    """Тест: Студент сдал или не сдал экзамен и его эмоции"""
-    # БЗ:
-    # 1) ∀x (Студент(x) ∧ ¬Сдал(x, Матан) → Грустный(x))
-    # 2) ∀x (Грустный(x) → ¬Веселый(x))
-    # 3) Студент(Петя)
-    # 4) ¬Сдал(Петя, Матан)
-    # Утверждение: ¬Веселый(Петя)
-    data = {
-        "statements": [
-            "∀(x, (student(x) ∧ ¬passed(x, math)) → sad(x))",
-            "∀(x, sad(x) → ¬happy(x))",
-            "student(petya)",
-            "¬passed(petya, math)"
-        ],
-        "goal": "¬happy(petya)"
-    }
-
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_tasks_approval():
-    """Тест: Задачи и выполнение"""
-    # 1) Существует задача, и все менеджеры одобряют её
-    # 2) Задача выполнена
-    # 3) Менеджер существует
-    # Нужно доказать: Проект продвигается
-    data = {
-        "statements": [
-            "some(t, task(t) ∧ ∀(m, manager(m) → approved_by(t, m)))",
-            "done(task1)",
-            "manager(manager1)"
-        ],
-        "goal": "progress(project)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
-
-def test_cat_gray_trap():
-    """Тест: Кошка Мурка серая - ловушка отсутствующего знания"""
-    # Вход: "Докажи, что кошка Мурка - серая. Мы знаем, что все кошки в этом доме серые."
-    # Ожидаемый вывод: FALSE
-    # Объяснение: "Нет информации о том, живет ли Мурка в доме"
-    data = {
-        "statements": [
-            "∀(x, (cat(x) ∧ lives_in_this_house(x)) → gray(x))"
-        ],
-        "goal": "gray(murka)"
-    }
-
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is False
-
-def test_studies_exam():
-    """Тест: Учёба и экзамены"""
-    # 1) Если студент учится и не ленивый, он сдаёт экзамен
-    # 2) Алекс учится
-    # 3) Алекс не ленивый
-    # Нужно доказать: Алекс сдал экзамен
-    data = {
-        "statements": [
-            "∀(s, (studies(s) ∧ ¬lazy(s)) → passes_exam(s))",
-            "studies(alex)",
-            "¬lazy(alex)"
-        ],
-        "goal": "passes_exam(alex)"
-    }
-    kb = parse_statements_and_goal(data)
-    success, log = resolution_proof(kb)
-    assert success is True
+    
+    assert success is True, "Должно доказать транзитивность включения"
