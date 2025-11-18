@@ -300,17 +300,49 @@ class ChatApp(App):
     def formalize_logic_task(self, task: str) -> str:
         system_prompt = (
             "Ты — система формальной логики. Преобразуй задачу в JSON со строго определённым синтаксисом.\n"
-            "Используй конструкции:\n"
-            "- Для 'некоторые' (экзистенциальные): some(x, y, P(x) ∧ Q(y) ∧ R(x, y)), или вложенные, например some(p, Patient(p) ∧ all(d, Doctor(d) → Loves(p, d)))\n"
-            "- Для 'все' (универсальные): all(x, y, z, (Friend(x, y) ∧ Friend(y, z)) → Friend(x, z))\n"
-            "- Предикаты могут быть унарными (свойства: Person(x)) или бинарными (отношения: Friend(x, y), Enemy(x, y)).\n"
-            "- Никогда не своди бинарные отношения (друг, враг, любит и т.п.) к унарным предикатам.\n"
-            "- Поддерживай вложенные all/some в body, если нужно для универсальности.\n"
-            "- Символы: ∧, ¬, →, ≠. Не используй ∃, ∀, =.\n"
-            "- statements и goal: только логические формулы, без имён/присваиваний.\n\n"
-            "Пример (правильный): Для 'Иван — друг Петра': Friend(Ivan, Petr)\n"
-            "Пример: 'Друг моего друга — мой друг': all(x, y, z, (Friend(x, y) ∧ Friend(y, z)) → Friend(x, z))\n"
-            "Выводи ТОЛЬКО чистый JSON."
+            "Правила преобразования:\n"
+            "- Используй только конструкции:\n"
+            "    • Экзистенциальные: ∃(x, P(x) ∧ Q(x))\n"
+            "    • Универсальные: ∀(x, P(x) → Q(x))\n"
+            "    • Вложенные кванторы разрешены в теле импликации/конъюнкции, например:\n"
+            "        ∃(x, P(x) ∧ ∀(y, R(y) → S(x, y)))\n"
+            "        ∀(x, (P(x) ∧ ∃(y, R(x, y))) → Q(x))\n"
+            "- Предикаты: только унарные (Person(x)) или бинарные (Friend(x, y)).\n"
+            "  НЕ своди бинарные отношения к унарным (например, не используй LovedByDoctor(x)).\n"
+            "- Операции: ∃, ∀, ∧, ∨, ¬, →, =, ≠. ЗАПРЕЩЕНЫ: ↔, ⇔, ≡, ⊕ и т.п.\n\n"
+            
+            "⚠️ Ключевое правило интерпретации:\n"
+            "Фразы вроде «некоторые A любят B» НЕОДНОЗНАЧНЫ в русском. Выбирай интерпретацию ТАК,\n"
+            "чтобы логически следовало утверждение из поля 'goal', если оно универсальное (начинается с ∀).\n"
+            "Обычно это означает:\n"
+            "    • «Некоторые пациенты любят докторов» → ∃(p, patient(p) ∧ ∀(d, doctor(d) → loves(p, d)))\n"
+            "      (существует пациент, который любит ВСЕХ докторов),\n"
+            "    а НЕ ∃p ∃d (patient(p) ∧ doctor(d) ∧ loves(p,d)),\n"
+            "      потому что последнее слишком слабо для доказательства ∀-утверждений.\n"
+            "    • Аналогично: «некоторые ученики уважают учителей» → ∃(s, student(s) ∧ ∀(t, teacher(t) → respects(s,t)))\n\n"
+            
+            "Другие типы фраз:\n"
+            "    • «Каждый A любит какого-нибудь B» → ∀(x, A(x) → ∃(y, B(y) ∧ loves(x, y)))\n"
+            "    • «Любой A, который любит всех B, …» → ∀(x, (A(x) ∧ ∀(y, B(y) → loves(x, y))) → …)\n"
+            "    • «Ни один A не любит B» → ∀(x, A(x) → ∀(y, B(y) → ¬loves(x, y)))\n"
+            "    • «Есть A, которого никто не любит» → ∃(x, A(x) ∧ ∀(y, ¬loves(y, x)))\n\n"
+            
+            "Примеры корректных преобразований:\n"
+            "'Иван — друг Петра' → Friend(Ivan, Petr)\n"
+            "'Все люди смертны' → ∀(x, human(x) → mortal(x))\n"
+            "'Некоторые пациенты любят всех врачей' → ∃(p, patient(p) ∧ ∀(d, doctor(d) → loves(p, d)))\n"
+            "'Некоторые пациенты любят врачей' (в задачах на доказательство) → ТО ЖЕ, что выше\n"
+            "'Ни один пациент не любит знахарей' → ∀(p, patient(p) → ∀(h, healer(h) → ¬loves(p, h)))\n\n"
+            
+            "Формат вывода:\n"
+            "- ТОЛЬКО валидный JSON (без комментариев, без пояснений):\n"
+            "  {\"statements\": [\"формула1\", \"формула2\", ...], \"goal\": \"формула\"}\n"
+            "- Имена предикатов — чувствительны к регистру: используй строчные буквы (loves, doctor),\n"
+            "  если в примерах не указано иное. Константы (Ivan) — с большой буквы.\n"
+            "- Не добавляй кванторы без необходимости; не используй скобки лишние.\n\n"
+            
+            "Если в задаче не хватает информации для однозначной формализации — выбирай наиболее сильную\n"
+            "интерпретацию, допускающую логический вывод цели (особенно если goal — ∀-формула)."
         )
 
         user_prompt = f"Формализуй эту задачу:\n{task}"
@@ -335,7 +367,8 @@ class ChatApp(App):
             data = json.loads(clean_json_str)
             print(data)
             full_report = solve_logic_task(data)
-            return full_report
+            full_report = json.loads(full_report)
+            return full_report['log']
             
         except json.JSONDecodeError as e:
             return f"Ошибка парсинга JSON от LLM:\n{str(e)}\n\nПолученный ответ:\n{raw_response}\n\nОчищенный JSON:\n{clean_json_str}"
@@ -470,18 +503,7 @@ class ChatApp(App):
             self.chat_bg = Rectangle(size=chat_panel.size, pos=chat_panel.pos)
         chat_panel.bind(size=self._update_chat_bg, pos=self._update_chat_bg)
         
-        top_bar = BoxLayout(size_hint_y=None, height=dp(40))
-        top_bar.add_widget(Label(size_hint_x=1))
-        self.settings_btn = Button(
-            text='⚙',
-            size_hint=(None, None),
-            size=(dp(40), dp(40)),
-            font_size=sp(20),
-            background_color=(0.2, 0.6, 1, 1)
-        )
-        self.settings_btn.bind(on_press=self.open_settings)
-        top_bar.add_widget(self.settings_btn)
-        chat_panel.add_widget(top_bar)
+        chat_panel.add_widget(Label(size_hint_y=None, height=dp(8)))
 
         self.chat_scroll = NoDragScrollView(
             bar_width=dp(8),
@@ -500,47 +522,70 @@ class ChatApp(App):
 
         input_panel = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(100))
         
-        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8))
+        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8), padding=(dp(8), dp(8)))
         self.user_input = FixedTextInput(
             hint_text='Введите сообщение...',
             multiline=True,
             font_size=sp(16),
-            padding=[dp(12), dp(12)],
+            padding=(dp(8), dp(12)),
             background_color=(1, 1, 1, 1),
             foreground_color=(0, 0, 0, 1),
             cursor_color=(0.2, 0.6, 1, 1)
         )
         self.user_input.bind(on_text_validate=self.send_message)
+
         send_btn = Button(
             text='\u25B6',
-            size_hint_x=None, width=dp(60),
+            size_hint_x=None, 
+            width=dp(60),
             font_size=sp(24),
-            background_color=(0.2, 0.8, 0.3, 1)
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1), 
+            padding=(dp(22), dp(10))
         )
+        send_btn.bind(pos=lambda btn, pos: setattr(btn, 'text_size', (btn.width, btn.height)))
         send_btn.bind(on_press=self.send_message)
-        input_box.add_widget(self.user_input, 1)
+        input_box.add_widget(self.user_input)
         input_box.add_widget(send_btn)
         self.send_btn = send_btn
         
         input_panel.add_widget(input_box)
         chat_panel.add_widget(input_panel)
 
-        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25)
-        chat_list_label = Label(
+        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25, padding=dp(9), spacing=dp(9))
+        top_right_bar = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(4), dp(4)), spacing=dp(8))
+
+        self.chats_btn = Button(
             text='Чаты',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=sp(16),
-            bold=True,
-            color=(1, 1, 1, 1)
+            size_hint_x=None,
+            width=dp(90),
+            font_size=sp(18),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
         )
+        top_right_bar.add_widget(self.chats_btn)
+        top_right_bar.add_widget(Label(size_hint_x=1))
+
+        self.settings_btn = Button(
+            text='⚙',
+            size_hint=(None, None),
+            size=(dp(40), dp(40)),
+            font_size=sp(25),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
+        )
+        self.settings_btn.bind(on_press=self.open_settings)
+        top_right_bar.add_widget(self.settings_btn)
+        chat_list_panel.add_widget(top_right_bar)
 
         with chat_list_panel.canvas.before:
             Color(0.2, 0.2, 0.2, 1)
             self.list_bg = Rectangle(size=chat_list_panel.size, pos=chat_list_panel.pos)
         chat_list_panel.bind(size=self._update_list_bg, pos=self._update_list_bg)
 
-        chat_list_panel.add_widget(chat_list_label)
+        chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(6)))
 
         self.chat_list_scroll = ScrollView(do_scroll_x=False)
         self.chat_list_layout = BoxLayout(
@@ -554,13 +599,18 @@ class ChatApp(App):
         chat_list_panel.add_widget(self.chat_list_scroll)
 
         new_chat_btn = Button(
-            text='+ Новый чат',
+            text='Новый чат',
             size_hint_y=None,
-            height=dp(40),
-            background_color=(0.3, 0.7, 0.3, 1)
+            height=dp(44),
+            font_size=sp(16),
+            size_hint_x=1,
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1),
+            padding=(dp(6), dp(6))
         )
         new_chat_btn.bind(on_press=self.create_and_load_new_chat)
         chat_list_panel.add_widget(new_chat_btn)
+        #chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(1)))  
 
         main_layout.add_widget(chat_panel)
         main_layout.add_widget(chat_list_panel)
@@ -674,11 +724,13 @@ class ChatApp(App):
         if streaming:
             self.send_btn.text = '\u25A0'
             self.send_btn.background_color = (0.8, 0.2, 0.2, 1)
+            self.send_btn.padding=(dp(18), dp(10))
             self.send_btn.unbind(on_press=self.send_message)
             self.send_btn.bind(on_press=self.interrupt_stream)
         else:
             self.send_btn.text = '\u25B6'
-            self.send_btn.background_color = (0.2, 0.8, 0.3, 1)
+            self.send_btn.background_color = (0.2, 0.7, 0.3, 1)
+            self.send_btn.padding=(dp(22), dp(10)) 
             self.send_btn.unbind(on_press=self.interrupt_stream)
             self.send_btn.bind(on_press=self.send_message)
 
@@ -774,11 +826,31 @@ class ChatApp(App):
             grid.add_widget(inp)
 
         content.add_widget(grid)
-        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16))
+        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16), background_normal='', background_color=(0.2, 0.7, 0.3, 1))
         save_btn.bind(on_press=self.save_settings)
         content.add_widget(save_btn)
 
-        self.settings_popup = Popup(title='Настройки API', content=content, size_hint=(0.85, 0.7))
+        header = Label(
+            text='Настройки API',
+            size_hint=(1, None),
+            font_size=dp(22),
+            height=dp(30),
+            halign='center',
+            valign='middle'
+        )
+        header.bind(size=lambda inst, sz: setattr(inst, 'text_size', (inst.width, inst.height)))
+
+        root = BoxLayout(orientation='vertical')
+        root.add_widget(header)
+        root.add_widget(content)  
+
+        self.settings_popup = Popup(
+            title='',
+            content=root,
+            size_hint=(None, None),
+            size=(dp(600), dp(315)),
+            separator_color=(0, 0, 0, 0)
+        )
         self.settings_popup.open()
 
     def save_settings(self, instance):
