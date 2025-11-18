@@ -921,7 +921,6 @@ class ChatApp(App):
                         event["tool_call"]["function"]["name"], args
                     )
                     full_text += "\n" + tool_response
-
             self.update_label(label, full_text, is_final=True)
             if self.streaming_chat_id:
                 self.save_message_to_chat_in_chat(full_text, is_user=False, chat_id=self.streaming_chat_id)
