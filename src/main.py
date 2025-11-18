@@ -90,43 +90,64 @@ class LLM:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_query}
         ]
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            max_tokens=self.max_tokens,
-            stream=True,
-            tools=tools,
-            tool_choice="auto"
-        )
+        
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.max_tokens,
+                stream=True,
+                tools=tools if tools else None,
+                tool_choice="auto" if tools else None
+            )
 
-        full_content = ""
-        tool_calls = []
+            full_content = ""
+            tool_calls = []
+            current_tool_index = -1
 
-        for chunk in completion:
-            delta = chunk.choices[0].delta
+            for chunk in completion:
+                if not chunk.choices:
+                    continue
+                    
+                delta = chunk.choices[0].delta
+                if not delta:
+                    continue
 
-            if delta.content:
-                full_content += delta.content
-                yield {"type": "text", "content": delta.content}
+                if delta.content:
+                    full_content += delta.content
+                    yield {"type": "text", "content": delta.content}
 
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    index = tc_delta.index
-                    if len(tool_calls) <= index:
-                        tool_calls.append({"id": None, "function": {"name": "", "arguments": ""}})
-                    tc = tool_calls[index]
-                    if tc["id"] is None:
-                        tc["id"] = tc_delta.id
-                    if tc_delta.function.name:
-                        tc["function"]["name"] = tc_delta.function.name
-                    if tc_delta.function.arguments:
-                        tc["function"]["arguments"] += tc_delta.function.arguments
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        if getattr(tc_delta, 'index', None) is not None:
+                            current_tool_index = tc_delta.index
+                            if len(tool_calls) <= current_tool_index:
+                                tool_calls.append({
+                                    "id": getattr(tc_delta, 'id', ''),
+                                    "function": {"name": "", "arguments": ""}
+                                })
+                        
+                        tc = tool_calls[current_tool_index]
+                        
+                        if getattr(tc_delta, 'id', None) and not tc["id"]:
+                            tc["id"] = tc_delta.id
+                        
+                        if getattr(tc_delta.function, 'name', None):
+                            tc["function"]["name"] = tc_delta.function.name
+                        
+                        if getattr(tc_delta.function, 'arguments', None):
+                            tc["function"]["arguments"] += tc_delta.function.arguments
 
-        if tool_calls:
-            for tc in tool_calls:
-                yield {"type": "tool_call", "tool_call": tc}
+            if tool_calls:
+                for tc in tool_calls:
+                    if tc["function"]["name"]:
+                        yield {"type": "tool_call", "tool_call": tc}
+                        
+        except Exception as e:
+            print(f"Ошибка в make_query_generator: {e}")
+            yield {"type": "text", "content": f"Ошибка соединения: {str(e)}"}
 
 
 class NoDragScrollView(ScrollView):
@@ -283,8 +304,8 @@ class ChatApp(App):
                 return "[Ошибка: пустая задача]"
             
             try:
-                formalized = self.formalize_logic_task(task)
-                return formalized
+                data = self.formalize_logic_task(task)
+                return data
             except Exception as e:
                 return f"[Ошибка формализации: {str(e)}]"
         else:
@@ -347,70 +368,109 @@ class ChatApp(App):
 
         user_prompt = f"Формализуй эту задачу:\n{task}"
 
-        response = self.llm.client.chat.completions.create(
-            model=self.llm.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=1024,
-            stream=False
-        )
-        
-        raw_response = response.choices[0].message.content.strip()
-
-        clean_json_str = self.extract_json_from_response(raw_response)
-        
         try:
+            response = self.llm.client.chat.completions.create(
+                model=self.llm.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=1024,
+                stream=False
+            )
+            
+            raw_response = response.choices[0].message.content.strip()
+            clean_json_str = self.extract_json_from_response(raw_response)
+            
             data = json.loads(clean_json_str)
-            print(data)
             full_report = solve_logic_task(data)
             full_report = json.loads(full_report)
 
-            explanation_prompt = (
-                "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
-                "Инструкции по формату ответа:\n"
-                "1. НЕ ИСПОЛЬЗУЙ никакие символы для оформления: никаких *, **, #, ~, __ и других декоративных символов\n"
-                "2. Строго придерживайся структуры по пунктам\n"
-                "3. Каждый пункт начинай с новой строки с цифры и точки\n"
-                "4. Не вставляй пустые строки между пунктами\n"
-                "5. Будь лаконичным и напиши только самое главное\n\n"
-                "6. Ответ должен быть логически выстроенным, последовательным и целостным"
-                "Исходная задача:\n"
-                f"{task}\n\n"
-                "Формализованная задача:\n"
-                f"{json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
-                "результат решения (лог алгоритма резолюции):\n"
-                f"{full_report['log']}\n\n"
-                "Объясни:\n"
-                "1. Что означают формальные записи в JSON (расшифруй предикаты и кванторы)\n"
-                "2. Как работал метод резолюции - основные шаги доказательства\n"
-                "3. Был ли найден ответ и что он означает\n"
-                "4. Простой вывод на естественном языке\n\n"
-            )
-
-            user_prompt = f"Объясни эту задачу:\n{task}"
-            explanation_response = self.llm.client.chat.completions.create(
-                model=self.llm.model,
-                messages=[
-                    {"role": "system", "content": explanation_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3, 
-                max_tokens=2000,
-                stream=False
-            )
-        
-            explanation = explanation_response.choices[0].message.content.strip()
-            final_result = explanation
-            return final_result
+            return json.dumps({
+                "task": task,
+                "formalized": data,
+                "solution": full_report
+            }, ensure_ascii=False)
             
         except json.JSONDecodeError as e:
-            return f"Ошибка парсинга JSON от LLM:\n{str(e)}\n\nПолученный ответ:\n{raw_response}\n\nОчищенный JSON:\n{clean_json_str}"
+            return json.dumps({
+                "error": f"Ошибка парсинга JSON: {str(e)}",
+                "raw_response": raw_response
+            })
         except Exception as e:
-            return f"Неожиданная ошибка:\n{str(e)}"
+            return json.dumps({
+                "error": f"Неожиданная ошибка: {str(e)}"
+            })
+
+    def stream_explanation(self, task_data: dict, label, full_text: str):
+        try:
+            task = task_data.get("task", "")
+            formalized = task_data.get("formalized", {})
+            solution = task_data.get("solution", {})
+            error = task_data.get("error", "")
+
+            if error:
+                explanation_prompt = f"Произошла ошибка при обработке задачи:\n{error}"
+            else:
+                explanation_prompt = (
+                    "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
+                    "Инструкции по формату ответа:\n"
+                    "1. НЕ ИСПОЛЬЗУЙ никакие символы для оформления: никаких *, **, #, ~, __ и других декоративных символов\n"
+                    "2. Строго придерживайся структуры по пунктам\n"
+                    "3. Каждый пункт начинай с новой строки с цифры и точки\n"
+                    "4. Не вставляй пустые строки между пунктами\n"
+                    "5. Будь лаконичным и напиши только самое главное\n\n"
+                    "6. Ответ должен быть логически выстроенным, последовательным и целостным\n\n"
+                    "Исходная задача:\n"
+                    f"{task}\n\n"
+                    "Формализованная задача:\n"
+                    f"{json.dumps(formalized, ensure_ascii=False, indent=2)}\n\n"
+                    "Результат решения (лог алгоритма резолюции):\n"
+                    f"{solution.get('log', '')}\n\n"
+                    "Объясни:\n"
+                    "1. Что означают формальные записи в JSON (расшифруй предикаты и кванторы)\n"
+                    "2. Как работал метод резолюции - основные шаги доказательства\n"
+                    "3. Был ли найден ответ и что он означает\n"
+                    "4. Простой вывод на естественном языке"
+                )
+
+            messages = [
+                {"role": "system", "content": explanation_prompt},
+                {"role": "user", "content": f"Объясни эту задачу: {task}"}
+            ]
+            
+            completion = self.llm.client.chat.completions.create(
+                model=self.llm.model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=2000,
+                stream=True
+            )
+
+            explanation_text = ""
+            for chunk in completion:
+                if not self.is_streaming:
+                    break
+                    
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    explanation_text += content
+                    full_text += content
+                    
+                    current_time = time.time()
+                    if current_time - self.last_update_time >= self.update_interval:
+                        self.update_label(label, full_text)
+                        self.last_update_time = current_time
+
+            return explanation_text
+            
+        except Exception as e:
+            error_msg = f"\n[Ошибка при генерации объяснения: {str(e)}]"
+            full_text += error_msg
+            self.update_label(label, full_text, is_final=True)
+            return error_msg
 
     def load_config(self):
         if config_file.exists():
@@ -718,7 +778,7 @@ class ChatApp(App):
                 messages = json.load(f)
                 if messages:
                     first_msg = messages[0]["text"]
-                    if first_msg.startswith("Вы: "):
+                    if first_msg.startswith("Вы:\n"):
                         first_msg = first_msg[4:]
                     return first_msg[:15] + ("…" if len(first_msg) > 15 else "")
         except Exception as e:
@@ -747,7 +807,7 @@ class ChatApp(App):
         if self.streaming_placeholder is not None and self.streaming_chat_id:
             label = self.streaming_placeholder
             if hasattr(label, 'message') and isinstance(label.message, str):
-                if label.message.startswith("ИИ: ") and not label.message.endswith(" [Прервано]"):
+                if label.message.startswith("ИИ:\n") and not label.message.endswith(" [Прервано]"):
                     new_text = label.text + " [Прервано]"
                     label.text = new_text
                     label.message = new_text
@@ -903,11 +963,11 @@ class ChatApp(App):
         if not text:
             return
 
-        self.save_message_to_chat(f"Вы: {text}", is_user=True)
-        self.add_message(f"Вы: {text}", is_user=True, skip_save=True)
+        self.save_message_to_chat(f"Вы:\n{text}", is_user=True)
+        self.add_message(f"Вы:\n{text}", is_user=True, skip_save=True)
         self.user_input.text = ''
 
-        placeholder = self.add_message("ИИ: ", is_user=False, skip_save=True)
+        placeholder = self.add_message("ИИ:\n", is_user=False, skip_save=True)
 
         self.is_streaming = True
         self.streaming_placeholder = placeholder
@@ -920,12 +980,12 @@ class ChatApp(App):
         Thread(target=self.stream_response, args=(text, placeholder), daemon=True).start()
 
     def stream_response(self, query, label):
-        full_text = "ИИ: "
+        full_text = "ИИ:\n"
         tools = [{
             "type": "function",
             "function": {
                 "name": "solve_logic_task",
-                "description": "Применяется, когда пользователь даёт логическую, математическую или текстовую задачу, требующую формализации сущностей и отношений для последующего логического вывода. Не используй для общих вопросов, объяснений или бесед.",
+                "description": "Применяется, когда пользователь даёт логическую, математическую или текстовую задачу, требующую формализации сущностей и отношений для последующего логического вывода.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -940,6 +1000,7 @@ class ChatApp(App):
         }]
 
         try:
+            tool_processed = False
             for event in self.llm.make_query_generator(query, tools=tools):
                 if not self.is_streaming:
                     full_text += " [Прервано]"
@@ -952,12 +1013,27 @@ class ChatApp(App):
                         self.update_label(label, full_text)
                         self.last_update_time = current_time
 
-                elif event["type"] == "tool_call":
+                elif event["type"] == "tool_call" and not tool_processed:
+                    tool_processed = True
                     args = json.loads(event["tool_call"]["function"]["arguments"])
-                    tool_response = self.handle_tool_call(
+                    
+                    tool_result = self.handle_tool_call(
                         event["tool_call"]["function"]["name"], args
                     )
-                    full_text += "\n" + tool_response
+                    
+                    try:
+                        task_data = json.loads(tool_result)
+                        
+                        if "error" in task_data:
+                            full_text += f"\n[Ошибка: {task_data['error']}]"
+                            self.update_label(label, full_text)
+                        else:
+                            explanation = self.stream_explanation(task_data, label, full_text)
+                            full_text += explanation
+                            
+                    except json.JSONDecodeError:
+                        full_text += "\n" + tool_result
+
             self.update_label(label, full_text, is_final=True)
             if self.streaming_chat_id:
                 self.save_message_to_chat_in_chat(full_text, is_user=False, chat_id=self.streaming_chat_id)
@@ -981,7 +1057,7 @@ class ChatApp(App):
             label._update_height()
 
     def add_message(self, text, is_user=False, skip_save=False) -> SelectableLabel:
-        if not skip_save and not (not is_user and text == "ИИ: "):
+        if not skip_save and not (not is_user and text == "ИИ:\n"):
             self.save_message_to_chat(text, is_user)
         label = SelectableLabel(message=text)
         if is_user:
