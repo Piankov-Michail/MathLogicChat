@@ -75,7 +75,7 @@ class LLM:
         base_url: str = "",
         temperature: float = 0.6,
         top_p: float = 0.95,
-        max_tokens: int = 65536):
+        max_tokens: int = 4096):
         self.token = token
         self.model = model
         self.base_url = base_url.strip()
