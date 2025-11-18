@@ -365,48 +365,10 @@ class ChatApp(App):
         
         try:
             data = json.loads(clean_json_str)
-            #print(data)
-            resolution_result = solve_logic_task(data)
-        
-            if isinstance(resolution_result, str):
-                resolution_data = json.loads(resolution_result)
-            else:
-                resolution_data = resolution_result
-                
-            full_report = resolution_data.get('log', '')
-            print(full_report)
-            
-            explanation_prompt = (
-                "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
-                "Исходная задача:\n"
-                f"{task}\n\n"
-                "Формализованная задача:\n"
-                f"{json.dumps(data, ensure_ascii=False, indent=2)}\n\n"
-                "результат решения (лог алгоритма резолюции):\n"
-                f"{full_report}\n\n"
-                "Объясни:\n"
-                "1. Что означают формальные записи в JSON (расшифруй предикаты и кванторы)\n"
-                "2. Как работал метод резолюции - основные шаги доказательства\n"
-                "3. Был ли найден ответ и что он означает\n"
-                "4. Простой вывод на естественном языке\n\n"
-                "Будь понятным и дружелюбным, используй примеры если нужно."
-            )
-
-            user_prompt = f"Объясни эту задачу:\n{task}"
-            explanation_response = self.llm.client.chat.completions.create(
-                model=self.llm.model,
-                messages=[
-                    {"role": "system", "content": explanation_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.3, 
-                max_tokens=2000,
-                stream=False
-            )
-        
-            explanation = explanation_response.choices[0].message.content.strip()
-            final_result = explanation
-            return final_result
+            print(data)
+            full_report = solve_logic_task(data)
+            full_report = json.loads(full_report)
+            return full_report['log']
             
         except json.JSONDecodeError as e:
             return f"Ошибка парсинга JSON от LLM:\n{str(e)}\n\nПолученный ответ:\n{raw_response}\n\nОчищенный JSON:\n{clean_json_str}"
@@ -541,18 +503,7 @@ class ChatApp(App):
             self.chat_bg = Rectangle(size=chat_panel.size, pos=chat_panel.pos)
         chat_panel.bind(size=self._update_chat_bg, pos=self._update_chat_bg)
         
-        top_bar = BoxLayout(size_hint_y=None, height=dp(40))
-        top_bar.add_widget(Label(size_hint_x=1))
-        self.settings_btn = Button(
-            text='⚙',
-            size_hint=(None, None),
-            size=(dp(40), dp(40)),
-            font_size=sp(20),
-            background_color=(0.2, 0.6, 1, 1)
-        )
-        self.settings_btn.bind(on_press=self.open_settings)
-        top_bar.add_widget(self.settings_btn)
-        chat_panel.add_widget(top_bar)
+        chat_panel.add_widget(Label(size_hint_y=None, height=dp(8)))
 
         self.chat_scroll = NoDragScrollView(
             bar_width=dp(8),
@@ -571,47 +522,70 @@ class ChatApp(App):
 
         input_panel = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(100))
         
-        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8))
+        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8), padding=(dp(8), dp(8)))
         self.user_input = FixedTextInput(
             hint_text='Введите сообщение...',
             multiline=True,
             font_size=sp(16),
-            padding=[dp(12), dp(12)],
+            padding=(dp(8), dp(12)),
             background_color=(1, 1, 1, 1),
             foreground_color=(0, 0, 0, 1),
             cursor_color=(0.2, 0.6, 1, 1)
         )
         self.user_input.bind(on_text_validate=self.send_message)
+
         send_btn = Button(
             text='\u25B6',
-            size_hint_x=None, width=dp(60),
+            size_hint_x=None, 
+            width=dp(60),
             font_size=sp(24),
-            background_color=(0.2, 0.8, 0.3, 1)
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1), 
+            padding=(dp(22), dp(10))
         )
+        send_btn.bind(pos=lambda btn, pos: setattr(btn, 'text_size', (btn.width, btn.height)))
         send_btn.bind(on_press=self.send_message)
-        input_box.add_widget(self.user_input, 1)
+        input_box.add_widget(self.user_input)
         input_box.add_widget(send_btn)
         self.send_btn = send_btn
         
         input_panel.add_widget(input_box)
         chat_panel.add_widget(input_panel)
 
-        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25)
-        chat_list_label = Label(
+        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25, padding=dp(9), spacing=dp(9))
+        top_right_bar = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(4), dp(4)), spacing=dp(8))
+
+        self.chats_btn = Button(
             text='Чаты',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=sp(16),
-            bold=True,
-            color=(1, 1, 1, 1)
+            size_hint_x=None,
+            width=dp(90),
+            font_size=sp(18),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
         )
+        top_right_bar.add_widget(self.chats_btn)
+        top_right_bar.add_widget(Label(size_hint_x=1))
+
+        self.settings_btn = Button(
+            text='⚙',
+            size_hint=(None, None),
+            size=(dp(40), dp(40)),
+            font_size=sp(25),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
+        )
+        self.settings_btn.bind(on_press=self.open_settings)
+        top_right_bar.add_widget(self.settings_btn)
+        chat_list_panel.add_widget(top_right_bar)
 
         with chat_list_panel.canvas.before:
             Color(0.2, 0.2, 0.2, 1)
             self.list_bg = Rectangle(size=chat_list_panel.size, pos=chat_list_panel.pos)
         chat_list_panel.bind(size=self._update_list_bg, pos=self._update_list_bg)
 
-        chat_list_panel.add_widget(chat_list_label)
+        chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(6)))
 
         self.chat_list_scroll = ScrollView(do_scroll_x=False)
         self.chat_list_layout = BoxLayout(
@@ -625,13 +599,18 @@ class ChatApp(App):
         chat_list_panel.add_widget(self.chat_list_scroll)
 
         new_chat_btn = Button(
-            text='+ Новый чат',
+            text='Новый чат',
             size_hint_y=None,
-            height=dp(40),
-            background_color=(0.3, 0.7, 0.3, 1)
+            height=dp(44),
+            font_size=sp(16),
+            size_hint_x=1,
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1),
+            padding=(dp(6), dp(6))
         )
         new_chat_btn.bind(on_press=self.create_and_load_new_chat)
         chat_list_panel.add_widget(new_chat_btn)
+        #chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(1)))  
 
         main_layout.add_widget(chat_panel)
         main_layout.add_widget(chat_list_panel)
@@ -745,11 +724,13 @@ class ChatApp(App):
         if streaming:
             self.send_btn.text = '\u25A0'
             self.send_btn.background_color = (0.8, 0.2, 0.2, 1)
+            self.send_btn.padding=(dp(18), dp(10))
             self.send_btn.unbind(on_press=self.send_message)
             self.send_btn.bind(on_press=self.interrupt_stream)
         else:
             self.send_btn.text = '\u25B6'
-            self.send_btn.background_color = (0.2, 0.8, 0.3, 1)
+            self.send_btn.background_color = (0.2, 0.7, 0.3, 1)
+            self.send_btn.padding=(dp(22), dp(10)) 
             self.send_btn.unbind(on_press=self.interrupt_stream)
             self.send_btn.bind(on_press=self.send_message)
 
@@ -845,11 +826,31 @@ class ChatApp(App):
             grid.add_widget(inp)
 
         content.add_widget(grid)
-        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16))
+        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16), background_normal='', background_color=(0.2, 0.7, 0.3, 1))
         save_btn.bind(on_press=self.save_settings)
         content.add_widget(save_btn)
 
-        self.settings_popup = Popup(title='Настройки API', content=content, size_hint=(0.85, 0.7))
+        header = Label(
+            text='Настройки API',
+            size_hint=(1, None),
+            font_size=dp(22),
+            height=dp(30),
+            halign='center',
+            valign='middle'
+        )
+        header.bind(size=lambda inst, sz: setattr(inst, 'text_size', (inst.width, inst.height)))
+
+        root = BoxLayout(orientation='vertical')
+        root.add_widget(header)
+        root.add_widget(content)  
+
+        self.settings_popup = Popup(
+            title='',
+            content=root,
+            size_hint=(None, None),
+            size=(dp(600), dp(315)),
+            separator_color=(0, 0, 0, 0)
+        )
         self.settings_popup.open()
 
     def save_settings(self, instance):
