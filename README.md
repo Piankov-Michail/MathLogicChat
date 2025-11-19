@@ -55,7 +55,10 @@ pyinstaller ChatApp_windows.spec
 ```
 
 <br><br>
+## [DEMO](https://docs.google.com/presentation/d/1JkvquSSn84EgfHs4uukGRbFLSOCg8MOxolrSS7R0HM8/edit?slide=id.p#slide=id.p)
 
-## [Ready-made application](https://github.com/Piankov-Michail/MathLogicChat/releases/tag/v1.0.0)
+<br><br>
+## [Ready-made application](https://github.com/Piankov-Michail/MathLogicChat/releases/tag/v1.2.0)
+
 
 
