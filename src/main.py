@@ -75,7 +75,7 @@ class LLM:
         base_url: str = "",
         temperature: float = 0.6,
         top_p: float = 0.95,
-        max_tokens: int = 65536):
+        max_tokens: int = 4096):
         self.token = token
         self.model = model
         self.base_url = base_url.strip()
@@ -90,43 +90,64 @@ class LLM:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_query}
         ]
-        completion = self.client.chat.completions.create(
-            model=self.model,
-            messages=messages,
-            temperature=self.temperature,
-            top_p=self.top_p,
-            max_tokens=self.max_tokens,
-            stream=True,
-            tools=tools,
-            tool_choice="auto"
-        )
+        
+        try:
+            completion = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=self.temperature,
+                top_p=self.top_p,
+                max_tokens=self.max_tokens,
+                stream=True,
+                tools=tools if tools else None,
+                tool_choice="auto" if tools else None
+            )
 
-        full_content = ""
-        tool_calls = []
+            full_content = ""
+            tool_calls = []
+            current_tool_index = -1
 
-        for chunk in completion:
-            delta = chunk.choices[0].delta
+            for chunk in completion:
+                if not chunk.choices:
+                    continue
+                    
+                delta = chunk.choices[0].delta
+                if not delta:
+                    continue
 
-            if delta.content:
-                full_content += delta.content
-                yield {"type": "text", "content": delta.content}
+                if delta.content:
+                    full_content += delta.content
+                    yield {"type": "text", "content": delta.content}
 
-            if delta.tool_calls:
-                for tc_delta in delta.tool_calls:
-                    index = tc_delta.index
-                    if len(tool_calls) <= index:
-                        tool_calls.append({"id": None, "function": {"name": "", "arguments": ""}})
-                    tc = tool_calls[index]
-                    if tc["id"] is None:
-                        tc["id"] = tc_delta.id
-                    if tc_delta.function.name:
-                        tc["function"]["name"] = tc_delta.function.name
-                    if tc_delta.function.arguments:
-                        tc["function"]["arguments"] += tc_delta.function.arguments
+                if delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        if getattr(tc_delta, 'index', None) is not None:
+                            current_tool_index = tc_delta.index
+                            if len(tool_calls) <= current_tool_index:
+                                tool_calls.append({
+                                    "id": getattr(tc_delta, 'id', ''),
+                                    "function": {"name": "", "arguments": ""}
+                                })
+                        
+                        tc = tool_calls[current_tool_index]
+                        
+                        if getattr(tc_delta, 'id', None) and not tc["id"]:
+                            tc["id"] = tc_delta.id
+                        
+                        if getattr(tc_delta.function, 'name', None):
+                            tc["function"]["name"] = tc_delta.function.name
+                        
+                        if getattr(tc_delta.function, 'arguments', None):
+                            tc["function"]["arguments"] += tc_delta.function.arguments
 
-        if tool_calls:
-            for tc in tool_calls:
-                yield {"type": "tool_call", "tool_call": tc}
+            if tool_calls:
+                for tc in tool_calls:
+                    if tc["function"]["name"]:
+                        yield {"type": "tool_call", "tool_call": tc}
+                        
+        except Exception as e:
+            print(f"Ошибка в make_query_generator: {e}")
+            yield {"type": "text", "content": f"Ошибка соединения: {str(e)}"}
 
 
 class NoDragScrollView(ScrollView):
@@ -283,8 +304,8 @@ class ChatApp(App):
                 return "[Ошибка: пустая задача]"
             
             try:
-                formalized = self.formalize_logic_task(task)
-                return formalized
+                data = self.formalize_logic_task(task)
+                return data
             except Exception as e:
                 return f"[Ошибка формализации: {str(e)}]"
         else:
@@ -347,33 +368,109 @@ class ChatApp(App):
 
         user_prompt = f"Формализуй эту задачу:\n{task}"
 
-        response = self.llm.client.chat.completions.create(
-            model=self.llm.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            response_format={"type": "json_object"},
-            temperature=0.0,
-            max_tokens=1024,
-            stream=False
-        )
-        
-        raw_response = response.choices[0].message.content.strip()
-
-        clean_json_str = self.extract_json_from_response(raw_response)
-        
         try:
+            response = self.llm.client.chat.completions.create(
+                model=self.llm.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.0,
+                max_tokens=1024,
+                stream=False
+            )
+            
+            raw_response = response.choices[0].message.content.strip()
+            clean_json_str = self.extract_json_from_response(raw_response)
+            
             data = json.loads(clean_json_str)
-            print(data)
             full_report = solve_logic_task(data)
             full_report = json.loads(full_report)
-            return full_report['log']
+
+            return json.dumps({
+                "task": task,
+                "formalized": data,
+                "solution": full_report
+            }, ensure_ascii=False)
             
         except json.JSONDecodeError as e:
-            return f"Ошибка парсинга JSON от LLM:\n{str(e)}\n\nПолученный ответ:\n{raw_response}\n\nОчищенный JSON:\n{clean_json_str}"
+            return json.dumps({
+                "error": f"Ошибка парсинга JSON: {str(e)}",
+                "raw_response": raw_response
+            })
         except Exception as e:
-            return f"Неожиданная ошибка:\n{str(e)}"
+            return json.dumps({
+                "error": f"Неожиданная ошибка: {str(e)}"
+            })
+
+    def stream_explanation(self, task_data: dict, label, full_text: str):
+        try:
+            task = task_data.get("task", "")
+            formalized = task_data.get("formalized", {})
+            solution = task_data.get("solution", {})
+            error = task_data.get("error", "")
+
+            if error:
+                explanation_prompt = f"Произошла ошибка при обработке задачи:\n{error}"
+            else:
+                explanation_prompt = (
+                    "Ты — эксперт по логике и математике. Объясни пользователю результат решения логической задачи.\n\n"
+                    "Инструкции по формату ответа:\n"
+                    "1. НЕ ИСПОЛЬЗУЙ никакие символы для оформления: никаких *, **, #, ~, __ и других декоративных символов\n"
+                    "2. Строго придерживайся структуры по пунктам\n"
+                    "3. Каждый пункт начинай с новой строки с цифры и точки\n"
+                    "4. Не вставляй пустые строки между пунктами\n"
+                    "5. Будь лаконичным и напиши только самое главное\n\n"
+                    "6. Ответ должен быть логически выстроенным, последовательным и целостным\n\n"
+                    "Исходная задача:\n"
+                    f"{task}\n\n"
+                    "Формализованная задача:\n"
+                    f"{json.dumps(formalized, ensure_ascii=False, indent=2)}\n\n"
+                    "Результат решения (лог алгоритма резолюции):\n"
+                    f"{solution.get('log', '')}\n\n"
+                    "Объясни:\n"
+                    "1. Что означают формальные записи в JSON (расшифруй предикаты и кванторы)\n"
+                    "2. Как работал метод резолюции - основные шаги доказательства\n"
+                    "3. Был ли найден ответ и что он означает\n"
+                    "4. Простой вывод на естественном языке"
+                )
+
+            messages = [
+                {"role": "system", "content": explanation_prompt},
+                {"role": "user", "content": f"Объясни эту задачу: {task}"}
+            ]
+            
+            completion = self.llm.client.chat.completions.create(
+                model=self.llm.model,
+                messages=messages,
+                temperature=0.3,
+                max_tokens=2000,
+                stream=True
+            )
+
+            explanation_text = ""
+            for chunk in completion:
+                if not self.is_streaming:
+                    break
+                    
+                if chunk.choices and chunk.choices[0].delta.content:
+                    content = chunk.choices[0].delta.content
+                    explanation_text += content
+                    full_text += content
+                    
+                    current_time = time.time()
+                    if current_time - self.last_update_time >= self.update_interval:
+                        self.update_label(label, full_text)
+                        self.last_update_time = current_time
+
+            return explanation_text
+            
+        except Exception as e:
+            error_msg = f"\n[Ошибка при генерации объяснения: {str(e)}]"
+            full_text += error_msg
+            self.update_label(label, full_text, is_final=True)
+            return error_msg
 
     def load_config(self):
         if config_file.exists():
@@ -503,18 +600,7 @@ class ChatApp(App):
             self.chat_bg = Rectangle(size=chat_panel.size, pos=chat_panel.pos)
         chat_panel.bind(size=self._update_chat_bg, pos=self._update_chat_bg)
         
-        top_bar = BoxLayout(size_hint_y=None, height=dp(40))
-        top_bar.add_widget(Label(size_hint_x=1))
-        self.settings_btn = Button(
-            text='⚙',
-            size_hint=(None, None),
-            size=(dp(40), dp(40)),
-            font_size=sp(20),
-            background_color=(0.2, 0.6, 1, 1)
-        )
-        self.settings_btn.bind(on_press=self.open_settings)
-        top_bar.add_widget(self.settings_btn)
-        chat_panel.add_widget(top_bar)
+        chat_panel.add_widget(Label(size_hint_y=None, height=dp(8)))
 
         self.chat_scroll = NoDragScrollView(
             bar_width=dp(8),
@@ -533,47 +619,70 @@ class ChatApp(App):
 
         input_panel = BoxLayout(orientation='vertical', size_hint_y=None, height=dp(100))
         
-        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8))
+        input_box = BoxLayout(size_hint=(1, None), height=dp(60), spacing=dp(8), padding=(dp(8), dp(8)))
         self.user_input = FixedTextInput(
             hint_text='Введите сообщение...',
             multiline=True,
             font_size=sp(16),
-            padding=[dp(12), dp(12)],
+            padding=(dp(8), dp(12)),
             background_color=(1, 1, 1, 1),
             foreground_color=(0, 0, 0, 1),
             cursor_color=(0.2, 0.6, 1, 1)
         )
         self.user_input.bind(on_text_validate=self.send_message)
+
         send_btn = Button(
             text='\u25B6',
-            size_hint_x=None, width=dp(60),
+            size_hint_x=None, 
+            width=dp(60),
             font_size=sp(24),
-            background_color=(0.2, 0.8, 0.3, 1)
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1), 
+            padding=(dp(22), dp(10))
         )
+        send_btn.bind(pos=lambda btn, pos: setattr(btn, 'text_size', (btn.width, btn.height)))
         send_btn.bind(on_press=self.send_message)
-        input_box.add_widget(self.user_input, 1)
+        input_box.add_widget(self.user_input)
         input_box.add_widget(send_btn)
         self.send_btn = send_btn
         
         input_panel.add_widget(input_box)
         chat_panel.add_widget(input_panel)
 
-        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25)
-        chat_list_label = Label(
+        chat_list_panel = BoxLayout(orientation='vertical', size_hint_x=0.25, padding=dp(9), spacing=dp(9))
+        top_right_bar = BoxLayout(size_hint_y=None, height=dp(48), padding=(dp(4), dp(4)), spacing=dp(8))
+
+        self.chats_btn = Button(
             text='Чаты',
-            size_hint_y=None,
-            height=dp(30),
-            font_size=sp(16),
-            bold=True,
-            color=(1, 1, 1, 1)
+            size_hint_x=None,
+            width=dp(90),
+            font_size=sp(18),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
         )
+        top_right_bar.add_widget(self.chats_btn)
+        top_right_bar.add_widget(Label(size_hint_x=1))
+
+        self.settings_btn = Button(
+            text='⚙',
+            size_hint=(None, None),
+            size=(dp(40), dp(40)),
+            font_size=sp(25),
+            background_normal='',
+            background_color=(0, 0, 0, 0),
+            padding=(dp(6), dp(6))
+        )
+        self.settings_btn.bind(on_press=self.open_settings)
+        top_right_bar.add_widget(self.settings_btn)
+        chat_list_panel.add_widget(top_right_bar)
 
         with chat_list_panel.canvas.before:
             Color(0.2, 0.2, 0.2, 1)
             self.list_bg = Rectangle(size=chat_list_panel.size, pos=chat_list_panel.pos)
         chat_list_panel.bind(size=self._update_list_bg, pos=self._update_list_bg)
 
-        chat_list_panel.add_widget(chat_list_label)
+        chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(6)))
 
         self.chat_list_scroll = ScrollView(do_scroll_x=False)
         self.chat_list_layout = BoxLayout(
@@ -587,13 +696,18 @@ class ChatApp(App):
         chat_list_panel.add_widget(self.chat_list_scroll)
 
         new_chat_btn = Button(
-            text='+ Новый чат',
+            text='Новый чат',
             size_hint_y=None,
-            height=dp(40),
-            background_color=(0.3, 0.7, 0.3, 1)
+            height=dp(44),
+            font_size=sp(16),
+            size_hint_x=1,
+            background_normal='',
+            background_color=(0.2, 0.7, 0.3, 1),
+            padding=(dp(6), dp(6))
         )
         new_chat_btn.bind(on_press=self.create_and_load_new_chat)
         chat_list_panel.add_widget(new_chat_btn)
+        #chat_list_panel.add_widget(Label(size_hint_y=None, height=dp(1)))  
 
         main_layout.add_widget(chat_panel)
         main_layout.add_widget(chat_list_panel)
@@ -664,7 +778,7 @@ class ChatApp(App):
                 messages = json.load(f)
                 if messages:
                     first_msg = messages[0]["text"]
-                    if first_msg.startswith("Вы: "):
+                    if first_msg.startswith("Вы:\n"):
                         first_msg = first_msg[4:]
                     return first_msg[:15] + ("…" if len(first_msg) > 15 else "")
         except Exception as e:
@@ -693,7 +807,7 @@ class ChatApp(App):
         if self.streaming_placeholder is not None and self.streaming_chat_id:
             label = self.streaming_placeholder
             if hasattr(label, 'message') and isinstance(label.message, str):
-                if label.message.startswith("ИИ: ") and not label.message.endswith(" [Прервано]"):
+                if label.message.startswith("ИИ:\n") and not label.message.endswith(" [Прервано]"):
                     new_text = label.text + " [Прервано]"
                     label.text = new_text
                     label.message = new_text
@@ -707,11 +821,13 @@ class ChatApp(App):
         if streaming:
             self.send_btn.text = '\u25A0'
             self.send_btn.background_color = (0.8, 0.2, 0.2, 1)
+            self.send_btn.padding=(dp(18), dp(10))
             self.send_btn.unbind(on_press=self.send_message)
             self.send_btn.bind(on_press=self.interrupt_stream)
         else:
             self.send_btn.text = '\u25B6'
-            self.send_btn.background_color = (0.2, 0.8, 0.3, 1)
+            self.send_btn.background_color = (0.2, 0.7, 0.3, 1)
+            self.send_btn.padding=(dp(22), dp(10)) 
             self.send_btn.unbind(on_press=self.interrupt_stream)
             self.send_btn.bind(on_press=self.send_message)
 
@@ -807,11 +923,31 @@ class ChatApp(App):
             grid.add_widget(inp)
 
         content.add_widget(grid)
-        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16))
+        save_btn = Button(text='Сохранить', size_hint_y=None, height=dp(50), font_size=sp(16), background_normal='', background_color=(0.2, 0.7, 0.3, 1))
         save_btn.bind(on_press=self.save_settings)
         content.add_widget(save_btn)
 
-        self.settings_popup = Popup(title='Настройки API', content=content, size_hint=(0.85, 0.7))
+        header = Label(
+            text='Настройки API',
+            size_hint=(1, None),
+            font_size=dp(22),
+            height=dp(30),
+            halign='center',
+            valign='middle'
+        )
+        header.bind(size=lambda inst, sz: setattr(inst, 'text_size', (inst.width, inst.height)))
+
+        root = BoxLayout(orientation='vertical')
+        root.add_widget(header)
+        root.add_widget(content)  
+
+        self.settings_popup = Popup(
+            title='',
+            content=root,
+            size_hint=(None, None),
+            size=(dp(600), dp(315)),
+            separator_color=(0, 0, 0, 0)
+        )
         self.settings_popup.open()
 
     def save_settings(self, instance):
@@ -827,11 +963,11 @@ class ChatApp(App):
         if not text:
             return
 
-        self.save_message_to_chat(f"Вы: {text}", is_user=True)
-        self.add_message(f"Вы: {text}", is_user=True, skip_save=True)
+        self.save_message_to_chat(f"Вы:\n{text}", is_user=True)
+        self.add_message(f"Вы:\n{text}", is_user=True, skip_save=True)
         self.user_input.text = ''
 
-        placeholder = self.add_message("ИИ: ", is_user=False, skip_save=True)
+        placeholder = self.add_message("ИИ:\n", is_user=False, skip_save=True)
 
         self.is_streaming = True
         self.streaming_placeholder = placeholder
@@ -844,12 +980,12 @@ class ChatApp(App):
         Thread(target=self.stream_response, args=(text, placeholder), daemon=True).start()
 
     def stream_response(self, query, label):
-        full_text = "ИИ: "
+        full_text = "ИИ:\n"
         tools = [{
             "type": "function",
             "function": {
                 "name": "solve_logic_task",
-                "description": "Применяется, когда пользователь даёт логическую, математическую или текстовую задачу, требующую формализации сущностей и отношений для последующего логического вывода. Не используй для общих вопросов, объяснений или бесед.",
+                "description": "Применяется, когда пользователь даёт логическую, математическую или текстовую задачу, требующую формализации сущностей и отношений для последующего логического вывода.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -864,6 +1000,7 @@ class ChatApp(App):
         }]
 
         try:
+            tool_processed = False
             for event in self.llm.make_query_generator(query, tools=tools):
                 if not self.is_streaming:
                     full_text += " [Прервано]"
@@ -876,12 +1013,26 @@ class ChatApp(App):
                         self.update_label(label, full_text)
                         self.last_update_time = current_time
 
-                elif event["type"] == "tool_call":
+                elif event["type"] == "tool_call" and not tool_processed:
+                    tool_processed = True
                     args = json.loads(event["tool_call"]["function"]["arguments"])
-                    tool_response = self.handle_tool_call(
+                    
+                    tool_result = self.handle_tool_call(
                         event["tool_call"]["function"]["name"], args
                     )
-                    full_text += "\n" + tool_response
+                    
+                    try:
+                        task_data = json.loads(tool_result)
+                        
+                        if "error" in task_data:
+                            full_text += f"\n[Ошибка: {task_data['error']}]"
+                            self.update_label(label, full_text)
+                        else:
+                            explanation = self.stream_explanation(task_data, label, full_text)
+                            full_text += explanation
+                            
+                    except json.JSONDecodeError:
+                        full_text += "\n" + tool_result
 
             self.update_label(label, full_text, is_final=True)
             if self.streaming_chat_id:
@@ -906,7 +1057,7 @@ class ChatApp(App):
             label._update_height()
 
     def add_message(self, text, is_user=False, skip_save=False) -> SelectableLabel:
-        if not skip_save and not (not is_user and text == "ИИ: "):
+        if not skip_save and not (not is_user and text == "ИИ:\n"):
             self.save_message_to_chat(text, is_user)
         label = SelectableLabel(message=text)
         if is_user:
