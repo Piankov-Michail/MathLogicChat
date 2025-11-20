@@ -62,6 +62,8 @@ pyinstaller ChatApp_windows.spec
 
 <br><br>
 ## Working LLMs: 
-### deepseek with tool like: [this](https://build.nvidia.com/deepseek-ai/deepseek-v3_1-terminus)
+### deepseek with tools support like: [this](https://build.nvidia.com/deepseek-ai/deepseek-v3_1-terminus)
+### qwen3 with tools support like: [this](https://ollama.com/library/qwen3)
+
 
 
