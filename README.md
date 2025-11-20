@@ -61,5 +61,7 @@ pyinstaller ChatApp_windows.spec
 ## [Ready-made application](https://github.com/Piankov-Michail/MathLogicChat/releases/tag/v1.2.0)
 
 <br><br>
-## Working LLMs: deepseek with tool like: [this](https://build.nvidia.com/deepseek-ai/deepseek-v3_1-terminus)
+## Working LLMs: 
+### deepseek with tool like: [this](https://build.nvidia.com/deepseek-ai/deepseek-v3_1-terminus)
+
 
